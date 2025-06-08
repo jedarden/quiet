@@ -1,0 +1,45 @@
+{
+  "mcpServers": {
+     "perplexityai": {
+      "command": "npx",
+      "args": [
+        "@modelcontextprotocol/server-sse-client",
+        "--url", "http://perplexity-service.mcp:8080/sse"
+      ],
+      "env": {
+        "MCP_TIMEOUT": "600"
+      }
+    },
+    "gpt-4o-search": {
+      "command": "npx",
+      "args": [
+        "@modelcontextprotocol/server-sse-client",
+        "--url", "http://gpt-4o-search-mcp-service.mcp:8000/sse"
+      ],
+      "env": {
+        "MCP_TIMEOUT": "300"
+      }
+    },
+    "crawl4ai": {
+      "command": "npx",
+      "args": [
+        "@modelcontextprotocol/server-sse-client",
+        "--url", "http://crawl4ai-service.mcp:11235/mcp/sse"
+      ],
+      "env": {
+        "MCP_TIMEOUT": "300"
+      }
+    },
+    "context7": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@upstash/context7-mcp"
+      ],
+      "alwaysAllow": [
+        "resolve-library-id",
+        "get-library-docs"
+      ]
+    }
+  }
+}
