@@ -1,125 +1,133 @@
-# QUIET - Functional Requirements Specification
+# Functional Requirements - QUIET Application
 
-## 1. System Overview
+## 1. Core Functionality
 
-QUIET (Quick Unwanted-noise Isolation and Elimination Technology) is an AI-powered desktop application that removes background noise from live audio streams in real-time. The system processes microphone input, applies advanced noise cancellation algorithms, and routes the cleaned audio to communication platforms.
+### 1.1 Audio Input Management
+- **FR-1.1.1**: The system SHALL provide a list of all available audio input devices
+- **FR-1.1.2**: The system SHALL allow users to select their preferred microphone from the list
+- **FR-1.1.3**: The system SHALL detect when audio devices are connected or disconnected
+- **FR-1.1.4**: The system SHALL remember the last selected audio device between sessions
+- **FR-1.1.5**: The system SHALL display current audio input levels in real-time
 
-## 2. Functional Requirements
+### 1.2 Noise Cancellation
+- **FR-1.2.1**: The system SHALL implement real-time noise reduction using ML-based algorithms (RNNoise or custom DNN)
+- **FR-1.2.2**: The system SHALL process audio with less than 30ms latency
+- **FR-1.2.3**: The system SHALL provide a toggle to enable/disable noise cancellation
+- **FR-1.2.4**: The system SHALL maintain speech quality with PESQ improvement of at least 0.4 points
+- **FR-1.2.5**: The system SHALL support multiple noise cancellation levels (Low, Medium, High)
+- **FR-1.2.6**: The system SHALL preserve speech intelligibility with STOI improvement of at least 5%
 
-### 2.1 Core Audio Processing
-- **FR-1**: System shall capture audio input from any available microphone device
-- **FR-2**: System shall apply real-time noise cancellation using AI/ML algorithms
-- **FR-3**: System shall output processed audio with <20ms latency
-- **FR-4**: System shall preserve speech quality while removing background noise
-- **FR-5**: System shall handle sample rates of 16kHz, 44.1kHz, and 48kHz
+### 1.3 Virtual Audio Device
+- **FR-1.3.1**: The system SHALL create a virtual audio output device
+- **FR-1.3.2**: The system SHALL route processed audio to the virtual device in real-time
+- **FR-1.3.3**: The virtual device SHALL be selectable as input in communication applications
+- **FR-1.3.4**: The system SHALL support both Windows (VB-Audio) and macOS (BlackHole) virtual devices
+- **FR-1.3.5**: The system SHALL handle audio format conversions automatically (sample rate, bit depth)
 
-### 2.2 User Interface
-- **FR-6**: Application shall provide a desktop GUI for Windows and macOS
-- **FR-7**: User shall be able to select input microphone from available devices
-- **FR-8**: User shall be able to toggle noise cancellation on/off
-- **FR-9**: System shall display real-time waveform of input audio
-- **FR-10**: System shall display real-time waveform of processed output audio
-- **FR-11**: System shall show noise reduction level indicator
+### 1.4 Audio Visualization
+- **FR-1.4.1**: The system SHALL display real-time waveform of input audio
+- **FR-1.4.2**: The system SHALL display real-time waveform of processed audio
+- **FR-1.4.3**: The system SHALL show frequency spectrum analysis of input signal
+- **FR-1.4.4**: The system SHALL highlight noise components being removed
+- **FR-1.4.5**: The system SHALL update visualizations at minimum 30 FPS
+- **FR-1.4.6**: The system SHALL display noise reduction level in dB
 
-### 2.3 Audio Routing
-- **FR-12**: System shall create virtual audio device for output routing
-- **FR-13**: Processed audio shall be available to Discord, Slack, Zoom, Google Meet
-- **FR-14**: System shall support audio passthrough when denoiser is disabled
-- **FR-15**: System shall maintain audio sync between input and output
+### 1.5 User Interface
+- **FR-1.5.1**: The system SHALL provide a native desktop application UI
+- **FR-1.5.2**: The system SHALL display all controls in a single main window
+- **FR-1.5.3**: The system SHALL provide system tray integration for quick access
+- **FR-1.5.4**: The system SHALL support keyboard shortcuts for main functions
+- **FR-1.5.5**: The system SHALL provide tooltips for all controls
+- **FR-1.5.6**: The system SHALL indicate current processing status (Active/Inactive)
 
-### 2.4 Performance Monitoring
-- **FR-16**: System shall display CPU usage indicator
-- **FR-17**: System shall show audio latency in milliseconds
-- **FR-18**: System shall indicate when audio dropout occurs
+### 1.6 Application Integration
+- **FR-1.6.1**: The system SHALL work with Discord voice chat
+- **FR-1.6.2**: The system SHALL work with Slack huddles
+- **FR-1.6.3**: The system SHALL work with Zoom meetings
+- **FR-1.6.4**: The system SHALL work with Google Meet
+- **FR-1.6.5**: The system SHALL work with any application using system audio input
 
-## 3. User Stories
+## 2. User Stories
 
 ### US-1: Basic Noise Cancellation
 **As a** remote worker  
 **I want to** remove background noise from my microphone  
-**So that** my colleagues can hear me clearly during video calls
+**So that** my colleagues can hear me clearly during calls  
 
 **Acceptance Criteria:**
-- User can launch the application
-- User can select their microphone
-- User can enable noise cancellation
-- Background noise is significantly reduced
-- Speech remains clear and natural
+- Can select microphone from dropdown
+- Can toggle noise cancellation on/off
+- Processed audio is available to communication apps
+- Visual feedback shows noise being removed
 
-### US-2: Visual Feedback
-**As a** user  
-**I want to** see visual representation of audio processing  
-**So that** I know the system is working correctly
-
-**Acceptance Criteria:**
-- Input waveform shows raw microphone signal
-- Output waveform shows processed signal
-- Difference is visually apparent when noise is present
-
-### US-3: Platform Integration
-**As a** gamer/professional  
-**I want to** use the processed audio in communication apps  
-**So that** I don't need to configure each app separately
+### US-2: Quick Toggle
+**As a** frequent meeting participant  
+**I want to** quickly enable/disable noise cancellation  
+**So that** I can adapt to changing environments  
 
 **Acceptance Criteria:**
-- Virtual audio device appears in Discord/Zoom/etc.
-- Selecting virtual device routes processed audio
-- No additional configuration required
+- Single click/hotkey to toggle processing
+- Visual indication of current state
+- No audio interruption during toggle
+- Settings preserved between toggles
 
-## 4. Use Cases
+### US-3: Visual Monitoring
+**As a** podcast host  
+**I want to** see my audio levels and processing effects  
+**So that** I can ensure optimal audio quality  
 
-### UC-1: Initial Setup
-1. User downloads and installs QUIET
-2. User launches application
-3. System detects available audio devices
-4. User selects preferred microphone
-5. System creates virtual audio output device
-6. User enables noise cancellation
-7. System begins processing audio
+**Acceptance Criteria:**
+- Real-time waveform display
+- Before/after comparison visible
+- Noise reduction amount shown
+- Peak level indicators
 
-### UC-2: Using with Communication Apps
-1. User opens Discord/Zoom/Slack/Meet
-2. User navigates to audio settings
-3. User selects "QUIET Virtual Microphone" as input
-4. Communication app receives processed audio
-5. Other participants hear noise-free audio
+### US-4: Multi-App Support
+**As a** consultant  
+**I want to** use the same noise cancellation across different meeting platforms  
+**So that** I have consistent audio quality  
 
-### UC-3: Adjusting Settings
-1. User notices too much/little noise reduction
-2. User adjusts sensitivity slider
-3. System updates processing parameters
-4. User hears immediate change in output
+**Acceptance Criteria:**
+- Virtual device appears in all apps
+- No app-specific configuration needed
+- Seamless switching between apps
+- Consistent processing quality
 
-## 5. Data Flow
+## 3. System Boundaries
 
-```
-Microphone → Audio Capture → Noise Cancellation → Virtual Device → Communication Apps
-                ↓                                      ↓
-           Input Viz                              Output Viz
-```
+### 3.1 Included in Scope
+- Real-time audio processing
+- Virtual audio device management
+- Desktop application for Windows/macOS
+- Integration with system audio APIs
+- Basic audio visualizations
+- ML-based noise reduction
 
-## 6. Interface Requirements
+### 3.2 Excluded from Scope
+- Mobile applications
+- Web-based interface
+- Cloud processing
+- Audio recording features
+- Advanced audio effects (reverb, compression)
+- Multi-channel/surround sound support
+- Network audio streaming
 
-### 6.1 Main Window
-- Microphone selection dropdown
-- Enable/Disable toggle button
-- Input level meter
-- Output level meter
-- Input waveform display
-- Output waveform display
-- CPU usage indicator
-- Latency indicator
+## 4. Interface Requirements
 
-### 6.2 Settings Panel
-- Noise reduction sensitivity slider
-- Sample rate selection
-- Buffer size adjustment
-- Advanced algorithm parameters
+### 4.1 Hardware Interfaces
+- Standard audio input devices (USB, 3.5mm, built-in)
+- System audio APIs (Core Audio, WASAPI)
+- CPU for ML inference (no GPU required)
 
-## 7. Error Handling
+### 4.2 Software Interfaces
+- Virtual audio driver APIs
+- System audio routing
+- Communication with OS audio subsystem
+- Configuration file I/O
 
-- **EH-1**: Display error if no microphone detected
-- **EH-2**: Alert user if virtual device creation fails
-- **EH-3**: Warn if CPU usage exceeds 80%
-- **EH-4**: Notify if audio dropout occurs
-- **EH-5**: Provide fallback to passthrough on algorithm failure
+### 4.3 User Interfaces
+- Main application window
+- System tray menu
+- Audio device selection dropdown
+- Toggle switches and sliders
+- Real-time visualization panels

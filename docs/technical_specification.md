@@ -1,201 +1,259 @@
-# QUIET - Technical Specification
+# Technical Specification - QUIET Application
 
-## 1. System Architecture
+## 1. Technology Stack Decision
 
-### 1.1 High-Level Architecture
+Based on comprehensive research and requirements analysis, the following technology decisions have been made:
+
+### 1.1 Core Technologies
+- **Programming Language**: C++ (C++17)
+  - Chosen for performance-critical audio processing
+  - Native system integration capabilities
+  - Mature ecosystem for audio development
+
+- **Audio Framework**: JUCE 8
+  - Cross-platform audio I/O and processing
+  - Built-in UI components optimized for audio applications
+  - Virtual device support through system APIs
+  - Excellent real-time performance
+
+- **Noise Reduction**: RNNoise
+  - State-of-the-art ML-based noise suppression
+  - Low latency (<10ms processing time)
+  - Minimal CPU usage (5-10%)
+  - Proven in production environments
+
+- **Build System**: CMake
+  - Cross-platform build configuration
+  - Integration with CI/CD pipelines
+  - Support for dependency management
+
+### 1.2 Platform-Specific Components
+
+#### Windows
+- **Audio API**: WASAPI (Windows Audio Session API)
+- **Virtual Device**: VB-Cable integration
+- **Installer**: WiX Toolset
+- **Code Signing**: Authenticode
+
+#### macOS
+- **Audio API**: Core Audio
+- **Virtual Device**: BlackHole integration
+- **Installer**: DMG with drag-and-drop
+- **Code Signing**: Apple Developer ID
+
+## 2. System Architecture
+
+### 2.1 High-Level Components
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                      Desktop Application                      │
-├─────────────────────────┬───────────────────────────────────┤
-│      UI Layer          │         Audio Engine              │
-│  ┌─────────────────┐  │  ┌─────────────────────────────┐ │
-│  │   Qt/Electron   │  │  │   Audio Capture Thread      │ │
-│  │   GUI Controls  │  │  │   ┌─────────────────────┐   │ │
-│  │   Waveform Viz  │  │  │   │  Noise Cancellation │   │ │
-│  └────────┬────────┘  │  │   │  (DCCRN/PercepNet)  │   │ │
-│           │           │  │   └─────────┬───────────┘   │ │
-│  ┌────────┴────────┐  │  │   ┌─────────┴───────────┐   │ │
-│  │  Settings Mgr   │  │  │   │  Audio Router       │   │ │
-│  │  State Manager  │  │  │   │  Virtual Device     │   │ │
-│  └─────────────────┘  │  │   └─────────────────────┘   │ │
-└───────────────────────┴─────────────────────────────────┘
-                                    │
-                        ┌───────────┴────────────┐
-                        │   OS Audio Subsystem   │
-                        │  (Core Audio/WASAPI)   │
-                        └────────────────────────┘
+│                        QUIET Application                      │
+├─────────────────────────────────────────────────────────────┤
+│                          UI Layer                             │
+│  ┌─────────────┐  ┌─────────────┐  ┌────────────────────┐  │
+│  │ Main Window │  │ System Tray │  │ Visualizations     │  │
+│  └─────────────┘  └─────────────┘  └────────────────────┘  │
+├─────────────────────────────────────────────────────────────┤
+│                      Application Core                         │
+│  ┌─────────────┐  ┌─────────────┐  ┌────────────────────┐  │
+│  │ App Manager │  │ Config Mgr  │  │ Event Dispatcher   │  │
+│  └─────────────┘  └─────────────┘  └────────────────────┘  │
+├─────────────────────────────────────────────────────────────┤
+│                      Audio Processing                         │
+│  ┌─────────────┐  ┌─────────────┐  ┌────────────────────┐  │
+│  │ Audio I/O   │  │ DSP Pipeline│  │ Noise Reduction    │  │
+│  └─────────────┘  └─────────────┘  └────────────────────┘  │
+├─────────────────────────────────────────────────────────────┤
+│                    Platform Abstraction                       │
+│  ┌─────────────┐  ┌─────────────┐  ┌────────────────────┐  │
+│  │ Audio HAL   │  │ Virtual Dev │  │ System Integration │  │
+│  └─────────────┘  └─────────────┘  └────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-### 1.2 Technology Stack
-
-**Core Technologies:**
-- **Language**: C++ (performance-critical audio processing)
-- **UI Framework**: Electron + React (cross-platform) OR Qt 6
-- **Audio Framework**: JUCE 7 (audio processing and plugin support)
-- **ML Runtime**: ONNX Runtime (cross-platform inference)
-- **Build System**: CMake
-- **Package Manager**: vcpkg/Conan
-
-**Platform-Specific:**
-- **Windows**: WASAPI, VB-Cable for virtual device
-- **macOS**: Core Audio, BlackHole for virtual device
-- **Virtual Audio**: Platform-specific kernel drivers
-
-## 2. Component Design
-
-### 2.1 Audio Engine Components
-
-**AudioCaptureModule**
-- Responsibility: Capture audio from selected microphone
-- Interface: `startCapture()`, `stopCapture()`, `setDevice(deviceId)`
-- Threading: Dedicated capture thread with ring buffer
-- Sample rate: 16kHz (processing), 44.1/48kHz (output)
-
-**NoiseCancellationModule**
-- Responsibility: Apply ML-based noise suppression
-- Algorithm: DCCRN (Deep Complex Convolution Recurrent Network)
-- Interface: `processFrame(inputBuffer, outputBuffer)`
-- Latency: <10ms processing time per frame
-- Frame size: 160 samples (10ms at 16kHz)
-
-**AudioRouterModule**
-- Responsibility: Route processed audio to virtual device
-- Interface: `routeAudio(processedBuffer)`
-- Implementation: Platform-specific audio APIs
-- Buffer management: Triple buffering for smooth playback
-
-**VisualizationModule**
-- Responsibility: Provide audio data for UI visualization
-- Interface: `getWaveformData()`, `getSpectrumData()`
-- Update rate: 30-60 FPS
-- Data format: Downsampled for display efficiency
-
-### 2.2 UI Components
-
-**MainWindow**
-- Framework: Electron (HTML/CSS/JS) or Qt QML
-- Layout: Single window with control panel and visualizers
-- State management: Redux (Electron) or Qt property bindings
-
-**AudioVisualizer**
-- Technology: Canvas 2D (Electron) or QCustomPlot (Qt)
-- Features: Dual waveform display, level meters
-- Performance: GPU-accelerated rendering where available
-
-**DeviceSelector**
-- Implementation: Dropdown populated from audio subsystem
-- Updates: Real-time device detection
-- Validation: Check device availability before selection
-
-### 2.3 ML Model Integration
-
-**Model Architecture**: DCCRN
-- Input: 16kHz mono audio frames
-- Processing: Complex-valued neural network
-- Output: Enhanced speech signal
-- Model size: ~3.7MB (quantized)
-- Inference: ONNX Runtime with CPU optimization
-
-**Model Pipeline**:
-1. Preprocessing: STFT with 512-point FFT
-2. Feature extraction: Magnitude and phase
-3. Network inference: Complex convolution layers
-4. Postprocessing: iSTFT reconstruction
-5. Overlap-add for continuous stream
-
-## 3. Data Flow Architecture
+### 2.2 Data Flow
 
 ```
-Microphone Input (48kHz)
-        ↓
-    Resampler (→16kHz)
-        ↓
-    Ring Buffer
-        ↓
-    Frame Extraction (10ms)
-        ↓
-    STFT Transform
-        ↓
-    DCCRN Inference
-        ↓
-    iSTFT Transform
-        ↓
-    Overlap-Add Buffer
-        ↓
-    Resampler (→48kHz)
-        ↓
-    Virtual Audio Device
-        ↓
-    Communication Apps
+Microphone → Audio Input → Buffer → Noise Reduction → Buffer → Virtual Device → Communication App
+                 ↓                          ↓                          ↓
+            Input Viz                  Processing                 Output Viz
 ```
 
-## 4. Threading Model
+## 3. API Design
 
-**Main Thread**: UI updates and user interaction
-**Audio Capture Thread**: High-priority audio input
-**Processing Thread**: ML inference and DSP
-**Audio Output Thread**: Virtual device writing
-**Visualization Thread**: Waveform data preparation
+### 3.1 Core Interfaces
 
-Thread communication via lock-free ring buffers.
+```cpp
+// Audio Processing Interface
+class IAudioProcessor {
+public:
+    virtual void processBlock(AudioBuffer& buffer) = 0;
+    virtual void setEnabled(bool enabled) = 0;
+    virtual float getReductionLevel() const = 0;
+};
 
-## 5. Performance Requirements
+// Audio Device Interface
+class IAudioDevice {
+public:
+    virtual std::vector<DeviceInfo> getAvailableDevices() = 0;
+    virtual bool selectDevice(const std::string& deviceId) = 0;
+    virtual DeviceInfo getCurrentDevice() const = 0;
+};
 
-- **CPU Usage**: <10% on modern processors
-- **Memory**: <200MB RAM
-- **Latency**: <20ms end-to-end
-- **Sample rates**: 16/44.1/48 kHz support
-- **Bit depth**: 16/24-bit audio
-
-## 6. Build Configuration
-
-### Windows Build:
-```cmake
-cmake -G "Visual Studio 17 2022" -A x64 \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DUSE_WASAPI=ON \
-  -DBUILD_VST=OFF
+// Visualization Interface
+class IVisualization {
+public:
+    virtual void updateData(const AudioBuffer& buffer) = 0;
+    virtual void render(Graphics& g) = 0;
+};
 ```
 
-### macOS Build:
-```cmake
-cmake -G "Xcode" \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DUSE_COREAUDIO=ON \
-  -DCMAKE_OSX_DEPLOYMENT_TARGET=10.15
+### 3.2 Event System
+
+```cpp
+// Event Types
+enum class AudioEvent {
+    DeviceChanged,
+    ProcessingToggled,
+    BufferProcessed,
+    ErrorOccurred
+};
+
+// Event Listener
+class IAudioEventListener {
+public:
+    virtual void onAudioEvent(AudioEvent event, const EventData& data) = 0;
+};
 ```
 
-## 7. Testing Architecture
+## 4. Implementation Plan
 
-- **Unit Tests**: Google Test for C++ components
-- **Integration Tests**: Audio pipeline validation
-- **Performance Tests**: Latency and CPU benchmarks
-- **Platform Tests**: Windows 10/11, macOS 10.15+
+### 4.1 Project Structure
 
-## 8. Security Considerations
+```
+quiet/
+├── src/
+│   ├── core/
+│   │   ├── AudioProcessor.cpp
+│   │   ├── AudioDeviceManager.cpp
+│   │   ├── NoiseReduction.cpp
+│   │   └── VirtualDevice.cpp
+│   ├── ui/
+│   │   ├── MainWindow.cpp
+│   │   ├── SystemTray.cpp
+│   │   ├── WaveformDisplay.cpp
+│   │   └── SpectrumAnalyzer.cpp
+│   ├── platform/
+│   │   ├── windows/
+│   │   │   ├── WASAPIDevice.cpp
+│   │   │   └── VBCableIntegration.cpp
+│   │   └── macos/
+│   │       ├── CoreAudioDevice.cpp
+│   │       └── BlackHoleIntegration.cpp
+│   └── main.cpp
+├── include/
+│   └── quiet/
+│       ├── interfaces/
+│       ├── core/
+│       └── ui/
+├── tests/
+│   ├── unit/
+│   └── integration/
+├── resources/
+│   ├── icons/
+│   └── config/
+├── cmake/
+└── CMakeLists.txt
+```
 
-- Code signing for Windows/macOS distribution
-- Sandboxing where applicable
-- No network connectivity required
-- Local processing only
-- Audio data never leaves device
+### 4.2 Development Phases
 
-## 9. Deployment
+#### Phase 1: Core Infrastructure (Week 1-2)
+- Set up project structure and build system
+- Implement basic JUCE application framework
+- Create audio device enumeration and selection
+- Establish audio callback and buffer management
 
-**Windows**: 
-- MSI installer with virtual driver
-- Code-signed executable
-- Auto-update mechanism
+#### Phase 2: Audio Processing (Week 3-4)
+- Integrate RNNoise library
+- Implement audio processing pipeline
+- Add bypass/enable functionality
+- Optimize for low latency
 
-**macOS**:
-- DMG with app bundle
-- Notarized for Gatekeeper
-- Separate BlackHole installer
+#### Phase 3: Virtual Device Integration (Week 5-6)
+- Windows: VB-Cable integration
+- macOS: BlackHole integration
+- Audio routing implementation
+- Format conversion handling
 
-## 10. Future Extensibility
+#### Phase 4: User Interface (Week 7-8)
+- Main window with controls
+- Real-time waveform visualization
+- Spectrum analyzer
+- System tray integration
 
-- Plugin architecture for alternative algorithms
-- Multi-microphone support
-- Custom training for specific noise types
-- Cloud-based model updates
-- Mobile companion apps
+#### Phase 5: Testing & Polish (Week 9-10)
+- Comprehensive unit tests
+- Integration testing
+- Performance optimization
+- Installer creation
+
+## 5. Testing Strategy
+
+### 5.1 Unit Testing
+- Test coverage target: 80%
+- Framework: Google Test
+- Mock audio devices for testing
+- Automated CI/CD pipeline
+
+### 5.2 Integration Testing
+- Real device testing on both platforms
+- Communication app compatibility tests
+- Performance benchmarks
+- Long-running stability tests
+
+### 5.3 User Acceptance Testing
+- Beta testing program
+- Feedback collection system
+- Performance metrics collection
+- Iterative improvements
+
+## 6. Performance Optimization
+
+### 6.1 Audio Processing
+- Lock-free audio callbacks
+- SIMD optimizations where applicable
+- Efficient buffer management
+- Minimal memory allocations
+
+### 6.2 UI Rendering
+- Separate UI thread from audio thread
+- Efficient visualization algorithms
+- Frame rate limiting for visualizations
+- Hardware acceleration where available
+
+## 7. Security Considerations
+
+### 7.1 Code Signing
+- Windows: EV Code Signing Certificate
+- macOS: Apple Developer ID
+- Automated signing in CI/CD
+
+### 7.2 Privacy
+- No network connections
+- No data collection
+- Local-only configuration
+- Secure configuration storage
+
+## 8. Distribution Plan
+
+### 8.1 Release Channels
+- Direct download from website
+- GitHub releases
+- Future: Microsoft Store, Mac App Store
+
+### 8.2 Update Mechanism
+- In-app update checker
+- Delta updates for patches
+- Rollback capability
+- Release notes display
