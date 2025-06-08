@@ -1,0 +1,49 @@
+{
+  "audio": {
+    "input_device_id": "",
+    "buffer_size": 256,
+    "sample_rate": 48000,
+    "auto_select_device": true,
+    "monitor_input": true
+  },
+  "processing": {
+    "noise_reduction_enabled": true,
+    "reduction_level": "medium",
+    "adaptive_mode": true,
+    "vad_threshold": 0.5,
+    "preserve_speech": true
+  },
+  "ui": {
+    "window_position": {
+      "x": 100,
+      "y": 100
+    },
+    "window_size": {
+      "width": 800,
+      "height": 600
+    },
+    "start_minimized": false,
+    "close_to_tray": true,
+    "theme": "dark",
+    "show_advanced_controls": false,
+    "visualization_fps": 30
+  },
+  "system": {
+    "auto_start": false,
+    "check_updates": true,
+    "send_usage_stats": false,
+    "log_level": "info"
+  },
+  "virtual_device": {
+    "auto_create": true,
+    "device_name": "QUIET Virtual Mic",
+    "sample_rate": 48000,
+    "channels": 1
+  },
+  "performance": {
+    "cpu_limit": 15.0,
+    "memory_limit": 200,
+    "priority": "normal",
+    "use_simd": true
+  }
+}

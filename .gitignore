@@ -1,0 +1,83 @@
+# Build directories
+build/
+cmake-build-*/
+out/
+
+# IDE files
+.vscode/
+.vs/
+*.vcxproj*
+*.sln
+*.suo
+*.user
+.idea/
+*.cbp
+*.workspace
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
+
+# macOS
+.DS_Store
+*.dSYM/
+
+# Windows
+Thumbs.db
+ehthumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*~
+
+# Logs
+*.log
+
+# Configuration
+config.json
+settings.ini
+
+# Third party
+third_party/
+
+# JUCE generated files
+JuceLibraryCode/
+Builds/
+
+# Audio test files
+*.wav
+*.aiff
+*.mp3
+
+# Package files
+*.dmg
+*.msi
+*.deb
+*.rpm
