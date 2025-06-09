@@ -3,6 +3,9 @@
 #include <juce_audio_devices/juce_audio_devices.h>
 #include <algorithm>
 #include <cmath>
+#include <chrono>
+#include <mutex>
+#include <condition_variable>
 
 namespace quiet {
 namespace core {
@@ -16,6 +19,21 @@ namespace {
     constexpr int DEFAULT_BUFFER_SIZE = 256;
     constexpr double LEVEL_SMOOTHING_FACTOR = 0.9;
 }
+
+// Device change listener implementation
+class AudioDeviceManager::DeviceChangeListener : public juce::ChangeListener {
+public:
+    DeviceChangeListener(AudioDeviceManager* manager) : m_manager(manager) {}
+    
+    void changeListenerCallback(juce::ChangeBroadcaster* source) override {
+        if (m_manager) {
+            m_manager->handleDeviceChange();
+        }
+    }
+    
+private:
+    AudioDeviceManager* m_manager;
+};
 
 AudioDeviceManager::AudioDeviceManager(EventDispatcher& eventDispatcher)
     : m_eventDispatcher(eventDispatcher)
@@ -51,10 +69,9 @@ bool AudioDeviceManager::initialize()
             return false;
         }
         
-        // Set up device change callback
-        m_juceDeviceManager->addChangeListener(new juce::ChangeListener {
-            [this] { handleDeviceChange(); }
-        });
+        // Set up device change listener
+        m_deviceChangeListener = std::make_unique<DeviceChangeListener>(this);
+        m_juceDeviceManager->addChangeListener(m_deviceChangeListener.get());
         
         // Update available devices list
         updateDeviceList();
@@ -95,6 +112,12 @@ void AudioDeviceManager::shutdown()
     // Stop audio if running
     if (m_isAudioActive) {
         stopAudio();
+    }
+    
+    // Remove change listener
+    if (m_deviceChangeListener && m_juceDeviceManager) {
+        m_juceDeviceManager->removeChangeListener(m_deviceChangeListener.get());
+        m_deviceChangeListener.reset();
     }
     
     // Close audio device

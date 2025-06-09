@@ -1,832 +1,583 @@
 #include "quiet/core/AudioBuffer.h"
-#include <algorithm>
 #include <cstring>
-#include <stdexcept>
-#include <cmath>
+#include <algorithm>
+#include <new>
+#include <cstdlib>
 
 #ifdef __AVX2__
 #include <immintrin.h>
 #endif
 
-#ifdef __ARM_NEON__
-#include <arm_neon.h>
-#endif
-
 namespace quiet {
 namespace core {
 
-// AudioBuffer Implementation
+// Memory alignment helpers
+void* AudioBuffer::allocateAligned(size_t bytes) {
+    if (bytes == 0) return nullptr;
+    
+    // Allocate with alignment for SIMD operations
+    void* ptr = nullptr;
+#ifdef _WIN32
+    ptr = _aligned_malloc(bytes, kAlignment);
+    if (!ptr) throw std::bad_alloc();
+#else
+    if (posix_memalign(&ptr, kAlignment, bytes) != 0) {
+        throw std::bad_alloc();
+    }
+#endif
+    return ptr;
+}
 
-AudioBuffer::AudioBuffer() = default;
+void AudioBuffer::deallocateAligned(void* ptr) {
+#ifdef _WIN32
+    _aligned_free(ptr);
+#else
+    free(ptr);
+#endif
+}
 
+// Default constructor
+AudioBuffer::AudioBuffer() 
+    : numChannels_(0)
+    , numSamples_(0)
+    , sampleRate_(48000.0)
+    , allocatedBytes_(0) {
+}
+
+// Parameterized constructor
 AudioBuffer::AudioBuffer(int numChannels, int numSamples, double sampleRate)
-    : m_numChannels(numChannels), m_numSamples(numSamples), m_sampleRate(sampleRate) {
+    : numChannels_(numChannels)
+    , numSamples_(numSamples)
+    , sampleRate_(sampleRate)
+    , allocatedBytes_(0) {
+    
     if (numChannels > 0 && numSamples > 0) {
-        allocateMemory();
-        clear();
+        allocateChannels();
+        clear();  // Initialize to zeros
     }
 }
 
-AudioBuffer::AudioBuffer(const AudioBuffer& other) {
-    copyData(other);
-}
-
-AudioBuffer::AudioBuffer(AudioBuffer&& other) noexcept
-    : m_numChannels(other.m_numChannels)
-    , m_numSamples(other.m_numSamples)
-    , m_sampleRate(other.m_sampleRate)
-    , m_channels(other.m_channels)
-    , m_allocatedMemory(other.m_allocatedMemory)
-    , m_allocatedSize(other.m_allocatedSize) {
+// Copy constructor
+AudioBuffer::AudioBuffer(const AudioBuffer& other)
+    : numChannels_(other.numChannels_)
+    , numSamples_(other.numSamples_)
+    , sampleRate_(other.sampleRate_)
+    , allocatedBytes_(0) {
     
-    // Reset moved-from object
-    other.m_numChannels = 0;
-    other.m_numSamples = 0;
-    other.m_channels = nullptr;
-    other.m_allocatedMemory = nullptr;
-    other.m_allocatedSize = 0;
+    if (numChannels_ > 0 && numSamples_ > 0) {
+        allocateChannels();
+        copyFrom(other);
+    }
 }
 
+// Move constructor
+AudioBuffer::AudioBuffer(AudioBuffer&& other) noexcept
+    : numChannels_(other.numChannels_)
+    , numSamples_(other.numSamples_)
+    , sampleRate_(other.sampleRate_)
+    , allocatedBytes_(other.allocatedBytes_)
+    , channels_(std::move(other.channels_))
+    , data_(std::move(other.data_)) {
+    
+    // Reset other to valid empty state
+    other.numChannels_ = 0;
+    other.numSamples_ = 0;
+    other.allocatedBytes_ = 0;
+}
+
+// Destructor
+AudioBuffer::~AudioBuffer() {
+    deallocateChannels();
+}
+
+// Copy assignment
 AudioBuffer& AudioBuffer::operator=(const AudioBuffer& other) {
     if (this != &other) {
-        deallocateMemory();
-        copyData(other);
+        // Reallocate if size doesn't match
+        if (numChannels_ != other.numChannels_ || numSamples_ != other.numSamples_) {
+            deallocateChannels();
+            numChannels_ = other.numChannels_;
+            numSamples_ = other.numSamples_;
+            sampleRate_ = other.sampleRate_;
+            allocateChannels();
+        } else {
+            sampleRate_ = other.sampleRate_;
+        }
+        
+        // Copy data
+        if (numChannels_ > 0 && numSamples_ > 0) {
+            copyFrom(other);
+        }
     }
     return *this;
 }
 
+// Move assignment
 AudioBuffer& AudioBuffer::operator=(AudioBuffer&& other) noexcept {
     if (this != &other) {
-        deallocateMemory();
+        deallocateChannels();
         
-        m_numChannels = other.m_numChannels;
-        m_numSamples = other.m_numSamples;
-        m_sampleRate = other.m_sampleRate;
-        m_channels = other.m_channels;
-        m_allocatedMemory = other.m_allocatedMemory;
-        m_allocatedSize = other.m_allocatedSize;
+        numChannels_ = other.numChannels_;
+        numSamples_ = other.numSamples_;
+        sampleRate_ = other.sampleRate_;
+        allocatedBytes_ = other.allocatedBytes_;
+        channels_ = std::move(other.channels_);
+        data_ = std::move(other.data_);
         
-        // Reset moved-from object
-        other.m_numChannels = 0;
-        other.m_numSamples = 0;
-        other.m_channels = nullptr;
-        other.m_allocatedMemory = nullptr;
-        other.m_allocatedSize = 0;
+        // Reset other
+        other.numChannels_ = 0;
+        other.numSamples_ = 0;
+        other.allocatedBytes_ = 0;
     }
     return *this;
 }
 
-AudioBuffer::~AudioBuffer() {
-    deallocateMemory();
-}
-
-void AudioBuffer::setSize(int numChannels, int numSamples, bool clearExistingContent) {
-    if (numChannels == m_numChannels && numSamples == m_numSamples) {
-        if (clearExistingContent) {
+// Set buffer size
+void AudioBuffer::setSize(int numChannels, int numSamples, bool clearBuffer) {
+    if (numChannels == numChannels_ && numSamples == numSamples_) {
+        if (clearBuffer) {
             clear();
         }
         return;
     }
     
-    deallocateMemory();
-    m_numChannels = numChannels;
-    m_numSamples = numSamples;
+    deallocateChannels();
+    numChannels_ = numChannels;
+    numSamples_ = numSamples;
     
     if (numChannels > 0 && numSamples > 0) {
-        allocateMemory();
-        if (clearExistingContent) {
+        allocateChannels();
+        if (clearBuffer) {
             clear();
         }
     }
 }
 
+// Clear operations
 void AudioBuffer::clear() {
-    if (m_allocatedMemory && m_allocatedSize > 0) {
-        clearSIMD(m_allocatedMemory, static_cast<int>(m_allocatedSize / sizeof(float)));
+    if (!isEmpty()) {
+        for (int ch = 0; ch < numChannels_; ++ch) {
+            clearSIMD(channels_[ch], numSamples_);
+        }
     }
 }
 
 void AudioBuffer::clear(int channel) {
-    if (channel >= 0 && channel < m_numChannels && m_channels) {
-        clearSIMD(m_channels[channel], m_numSamples);
+    if (channel >= 0 && channel < numChannels_) {
+        clearSIMD(channels_[channel], numSamples_);
     }
 }
 
 void AudioBuffer::clear(int channel, int startSample, int numSamples) {
-    if (channel >= 0 && channel < m_numChannels && m_channels &&
-        startSample >= 0 && startSample + numSamples <= m_numSamples) {
-        clearSIMD(m_channels[channel] + startSample, numSamples);
-    }
-}
-
-float* AudioBuffer::getWritePointer(int channel) {
-    return (channel >= 0 && channel < m_numChannels && m_channels) ? m_channels[channel] : nullptr;
-}
-
-const float* AudioBuffer::getReadPointer(int channel) const {
-    return (channel >= 0 && channel < m_numChannels && m_channels) ? m_channels[channel] : nullptr;
-}
-
-float** AudioBuffer::getArrayOfWritePointers() {
-    return m_channels;
-}
-
-const float* const* AudioBuffer::getArrayOfReadPointers() const {
-    // Ensure temp pointer array is large enough
-    if (m_tempChannelPointersSize < m_numChannels) {
-        delete[] m_tempChannelPointers;
-        m_tempChannelPointers = new const float*[m_numChannels];
-        m_tempChannelPointersSize = m_numChannels;
-    }
+    if (channel < 0 || channel >= numChannels_ || startSample < 0) return;
     
-    for (int i = 0; i < m_numChannels; ++i) {
-        m_tempChannelPointers[i] = m_channels[i];
-    }
+    int endSample = std::min(startSample + numSamples, numSamples_);
+    int samplesToFill = endSample - startSample;
     
-    return m_tempChannelPointers;
-}
-
-float AudioBuffer::getSample(int channel, int sample) const {
-    if (channel >= 0 && channel < m_numChannels && 
-        sample >= 0 && sample < m_numSamples && m_channels) {
-        return m_channels[channel][sample];
-    }
-    return 0.0f;
-}
-
-void AudioBuffer::setSample(int channel, int sample, float value) {
-    if (channel >= 0 && channel < m_numChannels && 
-        sample >= 0 && sample < m_numSamples && m_channels) {
-        m_channels[channel][sample] = value;
+    if (samplesToFill > 0) {
+        clearSIMD(channels_[channel] + startSample, samplesToFill);
     }
 }
 
-void AudioBuffer::addSample(int channel, int sample, float value) {
-    if (channel >= 0 && channel < m_numChannels && 
-        sample >= 0 && sample < m_numSamples && m_channels) {
-        m_channels[channel][sample] += value;
-    }
-}
-
+// Copy operations
 void AudioBuffer::copyFrom(int destChannel, int destStartSample,
                           const AudioBuffer& source, int sourceChannel,
                           int sourceStartSample, int numSamples) {
-    if (destChannel >= 0 && destChannel < m_numChannels &&
-        sourceChannel >= 0 && sourceChannel < source.m_numChannels &&
-        destStartSample >= 0 && destStartSample + numSamples <= m_numSamples &&
-        sourceStartSample >= 0 && sourceStartSample + numSamples <= source.m_numSamples &&
-        m_channels && source.m_channels) {
-        
-        copySIMD(m_channels[destChannel] + destStartSample,
-                source.m_channels[sourceChannel] + sourceStartSample,
-                numSamples);
+    if (destChannel < 0 || destChannel >= numChannels_ ||
+        sourceChannel < 0 || sourceChannel >= source.numChannels_) {
+        return;
+    }
+    
+    int sourceEnd = std::min(sourceStartSample + numSamples, source.numSamples_);
+    int destEnd = std::min(destStartSample + numSamples, numSamples_);
+    int actualSamples = std::min(sourceEnd - sourceStartSample, destEnd - destStartSample);
+    
+    if (actualSamples > 0) {
+        copySIMD(channels_[destChannel] + destStartSample,
+                source.channels_[sourceChannel] + sourceStartSample,
+                actualSamples);
+    }
+}
+
+void AudioBuffer::copyFrom(const AudioBuffer& source) {
+    int channelsToCopy = std::min(numChannels_, source.numChannels_);
+    int samplesToCopy = std::min(numSamples_, source.numSamples_);
+    
+    for (int ch = 0; ch < channelsToCopy; ++ch) {
+        copySIMD(channels_[ch], source.channels_[ch], samplesToCopy);
     }
 }
 
 void AudioBuffer::copyFrom(int destChannel, int destStartSample,
                           const float* source, int numSamples) {
-    if (destChannel >= 0 && destChannel < m_numChannels &&
-        destStartSample >= 0 && destStartSample + numSamples <= m_numSamples &&
-        m_channels && source) {
-        
-        copySIMD(m_channels[destChannel] + destStartSample, source, numSamples);
+    if (destChannel < 0 || destChannel >= numChannels_ || !source) {
+        return;
+    }
+    
+    int destEnd = std::min(destStartSample + numSamples, numSamples_);
+    int actualSamples = destEnd - destStartSample;
+    
+    if (actualSamples > 0) {
+        copySIMD(channels_[destChannel] + destStartSample, source, actualSamples);
     }
 }
 
+// Add operations
 void AudioBuffer::addFrom(int destChannel, int destStartSample,
                          const AudioBuffer& source, int sourceChannel,
-                         int sourceStartSample, int numSamples) {
-    if (destChannel >= 0 && destChannel < m_numChannels &&
-        sourceChannel >= 0 && sourceChannel < source.m_numChannels &&
-        destStartSample >= 0 && destStartSample + numSamples <= m_numSamples &&
-        sourceStartSample >= 0 && sourceStartSample + numSamples <= source.m_numSamples &&
-        m_channels && source.m_channels) {
-        
-        addSIMD(m_channels[destChannel] + destStartSample,
-               source.m_channels[sourceChannel] + sourceStartSample,
-               numSamples);
+                         int sourceStartSample, int numSamples, float gain) {
+    if (destChannel < 0 || destChannel >= numChannels_ ||
+        sourceChannel < 0 || sourceChannel >= source.numChannels_) {
+        return;
+    }
+    
+    int sourceEnd = std::min(sourceStartSample + numSamples, source.numSamples_);
+    int destEnd = std::min(destStartSample + numSamples, numSamples_);
+    int actualSamples = std::min(sourceEnd - sourceStartSample, destEnd - destStartSample);
+    
+    if (actualSamples > 0) {
+        addSIMD(channels_[destChannel] + destStartSample,
+               source.channels_[sourceChannel] + sourceStartSample,
+               actualSamples, gain);
     }
 }
 
-void AudioBuffer::addFrom(int destChannel, int destStartSample,
-                         const float* source, int numSamples) {
-    if (destChannel >= 0 && destChannel < m_numChannels &&
-        destStartSample >= 0 && destStartSample + numSamples <= m_numSamples &&
-        m_channels && source) {
-        
-        addSIMD(m_channels[destChannel] + destStartSample, source, numSamples);
+void AudioBuffer::addFrom(const AudioBuffer& source, float gain) {
+    int channelsToAdd = std::min(numChannels_, source.numChannels_);
+    int samplesToAdd = std::min(numSamples_, source.numSamples_);
+    
+    for (int ch = 0; ch < channelsToAdd; ++ch) {
+        addSIMD(channels_[ch], source.channels_[ch], samplesToAdd, gain);
     }
 }
 
-void AudioBuffer::addFromWithMultiply(int destChannel, int destStartSample,
-                                     const float* source, int numSamples, float gain) {
-    if (destChannel >= 0 && destChannel < m_numChannels &&
-        destStartSample >= 0 && destStartSample + numSamples <= m_numSamples &&
-        m_channels && source) {
-        
-        float* dest = m_channels[destChannel] + destStartSample;
-        for (int i = 0; i < numSamples; ++i) {
-            dest[i] += source[i] * gain;
-        }
-    }
-}
-
+// Gain operations
 void AudioBuffer::applyGain(float gain) {
-    for (int ch = 0; ch < m_numChannels; ++ch) {
-        if (m_channels[ch]) {
-            multiplySIMD(m_channels[ch], m_numSamples, gain);
-        }
+    for (int ch = 0; ch < numChannels_; ++ch) {
+        applySIMD(channels_[ch], numSamples_, gain);
     }
 }
 
 void AudioBuffer::applyGain(int channel, float gain) {
-    if (channel >= 0 && channel < m_numChannels && m_channels) {
-        multiplySIMD(m_channels[channel], m_numSamples, gain);
+    if (channel >= 0 && channel < numChannels_) {
+        applySIMD(channels_[channel], numSamples_, gain);
     }
 }
 
 void AudioBuffer::applyGain(int channel, int startSample, int numSamples, float gain) {
-    if (channel >= 0 && channel < m_numChannels &&
-        startSample >= 0 && startSample + numSamples <= m_numSamples &&
-        m_channels) {
-        
-        multiplySIMD(m_channels[channel] + startSample, numSamples, gain);
+    if (channel < 0 || channel >= numChannels_ || startSample < 0) return;
+    
+    int endSample = std::min(startSample + numSamples, numSamples_);
+    int samplesToProcess = endSample - startSample;
+    
+    if (samplesToProcess > 0) {
+        applySIMD(channels_[channel] + startSample, samplesToProcess, gain);
     }
 }
 
 void AudioBuffer::applyGainRamp(int channel, int startSample, int numSamples,
                                float startGain, float endGain) {
-    if (channel >= 0 && channel < m_numChannels &&
-        startSample >= 0 && startSample + numSamples <= m_numSamples &&
-        m_channels && numSamples > 0) {
+    if (channel < 0 || channel >= numChannels_ || startSample < 0) return;
+    
+    int endSample = std::min(startSample + numSamples, numSamples_);
+    int samplesToProcess = endSample - startSample;
+    
+    if (samplesToProcess > 0) {
+        float* buffer = channels_[channel] + startSample;
+        float gainStep = (endGain - startGain) / samplesToProcess;
+        float currentGain = startGain;
         
-        float* data = m_channels[channel] + startSample;
-        float gainStep = (endGain - startGain) / static_cast<float>(numSamples - 1);
-        
-        for (int i = 0; i < numSamples; ++i) {
-            data[i] *= startGain + i * gainStep;
+        for (int i = 0; i < samplesToProcess; ++i) {
+            buffer[i] *= currentGain;
+            currentGain += gainStep;
         }
     }
+}
+
+// Level analysis
+float AudioBuffer::getRMSLevel(int channel, int startSample, int numSamples) const {
+    if (channel < 0 || channel >= numChannels_ || startSample < 0 || numSamples <= 0) {
+        return 0.0f;
+    }
+    
+    int endSample = std::min(startSample + numSamples, numSamples_);
+    int actualSamples = endSample - startSample;
+    
+    if (actualSamples <= 0) return 0.0f;
+    
+    const float* buffer = channels_[channel] + startSample;
+    float sum = 0.0f;
+    
+    // Use SIMD for sum of squares
+    for (int i = 0; i < actualSamples; ++i) {
+        sum += buffer[i] * buffer[i];
+    }
+    
+    return std::sqrt(sum / actualSamples);
 }
 
 float AudioBuffer::getMagnitude(int channel, int startSample, int numSamples) const {
-    if (channel >= 0 && channel < m_numChannels &&
-        startSample >= 0 && startSample + numSamples <= m_numSamples &&
-        m_channels) {
-        
-        return getMagnitudeSIMD(m_channels[channel] + startSample, numSamples);
-    }
-    return 0.0f;
-}
-
-float AudioBuffer::getMagnitude(int startSample, int numSamples) const {
-    float maxMagnitude = 0.0f;
-    for (int ch = 0; ch < m_numChannels; ++ch) {
-        float magnitude = getMagnitude(ch, startSample, numSamples);
-        maxMagnitude = std::max(maxMagnitude, magnitude);
-    }
-    return maxMagnitude;
-}
-
-float AudioBuffer::getRMSLevel(int channel, int startSample, int numSamples) const {
-    if (channel >= 0 && channel < m_numChannels &&
-        startSample >= 0 && startSample + numSamples <= m_numSamples &&
-        m_channels) {
-        
-        return getRMSLevelSIMD(m_channels[channel] + startSample, numSamples);
-    }
-    return 0.0f;
-}
-
-float AudioBuffer::getRMSLevel(int startSample, int numSamples) const {
-    float sumSquares = 0.0f;
-    int totalSamples = 0;
-    
-    for (int ch = 0; ch < m_numChannels; ++ch) {
-        if (m_channels[ch]) {
-            const float* data = m_channels[ch] + startSample;
-            for (int i = 0; i < numSamples; ++i) {
-                sumSquares += data[i] * data[i];
-            }
-            totalSamples += numSamples;
-        }
+    if (channel < 0 || channel >= numChannels_ || startSample < 0 || numSamples <= 0) {
+        return 0.0f;
     }
     
-    return totalSamples > 0 ? std::sqrt(sumSquares / totalSamples) : 0.0f;
-}
-
-float AudioBuffer::findMinimum(int channel, int startSample, int numSamples) const {
-    if (channel >= 0 && channel < m_numChannels &&
-        startSample >= 0 && startSample + numSamples <= m_numSamples &&
-        m_channels && numSamples > 0) {
-        
-        const float* data = m_channels[channel] + startSample;
-        return *std::min_element(data, data + numSamples);
+    int endSample = std::min(startSample + numSamples, numSamples_);
+    int actualSamples = endSample - startSample;
+    
+    if (actualSamples <= 0) return 0.0f;
+    
+    const float* buffer = channels_[channel] + startSample;
+    float maxMag = 0.0f;
+    
+    for (int i = 0; i < actualSamples; ++i) {
+        maxMag = std::max(maxMag, std::abs(buffer[i]));
     }
-    return 0.0f;
-}
-
-float AudioBuffer::findMaximum(int channel, int startSample, int numSamples) const {
-    if (channel >= 0 && channel < m_numChannels &&
-        startSample >= 0 && startSample + numSamples <= m_numSamples &&
-        m_channels && numSamples > 0) {
-        
-        const float* data = m_channels[channel] + startSample;
-        return *std::max_element(data, data + numSamples);
-    }
-    return 0.0f;
+    
+    return maxMag;
 }
 
 void AudioBuffer::findMinAndMax(int channel, int startSample, int numSamples,
-                               float& minValue, float& maxValue) const {
-    if (channel >= 0 && channel < m_numChannels &&
-        startSample >= 0 && startSample + numSamples <= m_numSamples &&
-        m_channels && numSamples > 0) {
-        
-        const float* data = m_channels[channel] + startSample;
-        auto [minIt, maxIt] = std::minmax_element(data, data + numSamples);
-        minValue = *minIt;
-        maxValue = *maxIt;
-    } else {
-        minValue = maxValue = 0.0f;
-    }
-}
-
-void AudioBuffer::convertToInterleaved(std::vector<float>& interleavedData) const {
-    interleavedData.resize(m_numChannels * m_numSamples);
-    
-    for (int sample = 0; sample < m_numSamples; ++sample) {
-        for (int ch = 0; ch < m_numChannels; ++ch) {
-            interleavedData[sample * m_numChannels + ch] = getSample(ch, sample);
-        }
-    }
-}
-
-void AudioBuffer::convertFromInterleaved(const float* interleavedData, int numSamples) {
-    if (!interleavedData || numSamples <= 0) return;
-    
-    setSize(m_numChannels, numSamples, false);
-    
-    for (int sample = 0; sample < numSamples; ++sample) {
-        for (int ch = 0; ch < m_numChannels; ++ch) {
-            setSample(ch, sample, interleavedData[sample * m_numChannels + ch]);
-        }
-    }
-}
-
-void AudioBuffer::convertToMono(AudioBuffer& monoBuffer) const {
-    if (m_numChannels == 0) {
-        monoBuffer.setSize(0, 0);
+                               float& minVal, float& maxVal) const {
+    if (channel < 0 || channel >= numChannels_ || startSample < 0 || numSamples <= 0) {
+        minVal = maxVal = 0.0f;
         return;
     }
     
-    monoBuffer.setSize(1, m_numSamples, true);
+    int endSample = std::min(startSample + numSamples, numSamples_);
+    int actualSamples = endSample - startSample;
     
-    if (m_numChannels == 1) {
-        // Already mono, just copy
-        monoBuffer.copyFrom(0, 0, *this, 0, 0, m_numSamples);
+    if (actualSamples <= 0) {
+        minVal = maxVal = 0.0f;
+        return;
+    }
+    
+    const float* buffer = channels_[channel] + startSample;
+    minVal = maxVal = buffer[0];
+    
+    for (int i = 1; i < actualSamples; ++i) {
+        minVal = std::min(minVal, buffer[i]);
+        maxVal = std::max(maxVal, buffer[i]);
+    }
+}
+
+// Format conversion
+void AudioBuffer::convertToMono(AudioBuffer& destination) const {
+    destination.setSize(1, numSamples_);
+    destination.setSampleRate(sampleRate_);
+    
+    if (numChannels_ == 0 || numSamples_ == 0) return;
+    
+    float* destBuffer = destination.getWritePointer(0);
+    
+    // Clear destination first
+    destination.clear();
+    
+    // Sum all channels
+    for (int ch = 0; ch < numChannels_; ++ch) {
+        for (int i = 0; i < numSamples_; ++i) {
+            destBuffer[i] += channels_[ch][i];
+        }
+    }
+    
+    // Average
+    float scale = 1.0f / numChannels_;
+    destination.applyGain(0, scale);
+}
+
+void AudioBuffer::convertToStereo(AudioBuffer& destination) const {
+    destination.setSize(2, numSamples_);
+    destination.setSampleRate(sampleRate_);
+    
+    if (numChannels_ == 0 || numSamples_ == 0) return;
+    
+    if (numChannels_ == 1) {
+        // Mono to stereo - duplicate channel
+        destination.copyFrom(0, 0, *this, 0, 0, numSamples_);
+        destination.copyFrom(1, 0, *this, 0, 0, numSamples_);
     } else {
-        // Mix down to mono
-        float* monoData = monoBuffer.getWritePointer(0);
-        const float scale = 1.0f / m_numChannels;
-        
-        for (int sample = 0; sample < m_numSamples; ++sample) {
-            float sum = 0.0f;
-            for (int ch = 0; ch < m_numChannels; ++ch) {
-                sum += getSample(ch, sample);
+        // Multi-channel to stereo - copy first two channels
+        destination.copyFrom(0, 0, *this, 0, 0, numSamples_);
+        destination.copyFrom(1, 0, *this, 1, 0, numSamples_);
+    }
+}
+
+void AudioBuffer::convertToInterleaved(std::vector<float>& destination) const {
+    destination.resize(numChannels_ * numSamples_);
+    
+    if (numChannels_ == 0 || numSamples_ == 0) return;
+    
+    // Interleave channels
+    size_t destIndex = 0;
+    for (int sample = 0; sample < numSamples_; ++sample) {
+        for (int ch = 0; ch < numChannels_; ++ch) {
+            destination[destIndex++] = channels_[ch][sample];
+        }
+    }
+}
+
+void AudioBuffer::convertFromInterleaved(const float* source, int numSamples) {
+    if (!source || numChannels_ == 0) return;
+    
+    int samplesToCopy = std::min(numSamples, numSamples_);
+    
+    // De-interleave
+    size_t sourceIndex = 0;
+    for (int sample = 0; sample < samplesToCopy; ++sample) {
+        for (int ch = 0; ch < numChannels_; ++ch) {
+            channels_[ch][sample] = source[sourceIndex++];
+        }
+    }
+}
+
+// Utility functions
+bool AudioBuffer::hasBeenClipped() const {
+    for (int ch = 0; ch < numChannels_; ++ch) {
+        for (int i = 0; i < numSamples_; ++i) {
+            float sample = std::abs(channels_[ch][i]);
+            if (sample >= 1.0f) {
+                return true;
             }
-            monoData[sample] = sum * scale;
         }
     }
-}
-
-void AudioBuffer::convertToStereo(AudioBuffer& stereoBuffer) const {
-    stereoBuffer.setSize(2, m_numSamples, true);
-    
-    if (m_numChannels == 0) {
-        return;
-    } else if (m_numChannels == 1) {
-        // Duplicate mono to both channels
-        stereoBuffer.copyFrom(0, 0, *this, 0, 0, m_numSamples);
-        stereoBuffer.copyFrom(1, 0, *this, 0, 0, m_numSamples);
-    } else {
-        // Copy first two channels
-        stereoBuffer.copyFrom(0, 0, *this, 0, 0, m_numSamples);
-        if (m_numChannels > 1) {
-            stereoBuffer.copyFrom(1, 0, *this, 1, 0, m_numSamples);
-        } else {
-            stereoBuffer.copyFrom(1, 0, *this, 0, 0, m_numSamples);
-        }
-    }
-}
-
-size_t AudioBuffer::getSizeInBytes() const {
-    return m_allocatedSize;
-}
-
-void AudioBuffer::reverse() {
-    for (int ch = 0; ch < m_numChannels; ++ch) {
-        reverse(ch);
-    }
-}
-
-void AudioBuffer::reverse(int channel) {
-    reverse(channel, 0, m_numSamples);
+    return false;
 }
 
 void AudioBuffer::reverse(int channel, int startSample, int numSamples) {
-    if (channel >= 0 && channel < m_numChannels &&
-        startSample >= 0 && startSample + numSamples <= m_numSamples &&
-        m_channels) {
-        
-        float* data = m_channels[channel] + startSample;
-        std::reverse(data, data + numSamples);
-    }
+    if (channel < 0 || channel >= numChannels_ || startSample < 0) return;
+    
+    int endSample = std::min(startSample + numSamples, numSamples_);
+    int actualSamples = endSample - startSample;
+    
+    if (actualSamples <= 1) return;
+    
+    float* buffer = channels_[channel] + startSample;
+    std::reverse(buffer, buffer + actualSamples);
 }
 
-// Private methods
-
-void AudioBuffer::allocateMemory() {
-    const size_t channelSize = m_numSamples * sizeof(float);
-    const size_t totalSize = m_numChannels * channelSize;
-    const size_t alignment = 32;  // For SIMD
+// Memory management
+void AudioBuffer::allocateChannels() {
+    if (numChannels_ <= 0 || numSamples_ <= 0) return;
     
-    // Allocate aligned memory for audio data
-    m_allocatedSize = totalSize + alignment - 1;
-    m_allocatedMemory = static_cast<float*>(std::aligned_alloc(alignment, m_allocatedSize));
+    // Calculate total bytes needed
+    size_t bytesPerChannel = numSamples_ * sizeof(float);
+    size_t totalBytes = numChannels_ * bytesPerChannel;
     
-    if (!m_allocatedMemory) {
-        throw std::bad_alloc();
-    }
-    
-    // Allocate channel pointer array
-    m_channels = new float*[m_numChannels];
+    // Allocate contiguous memory for all channels
+    data_.reset(static_cast<float*>(allocateAligned(totalBytes)));
+    allocatedBytes_ = totalBytes;
     
     // Set up channel pointers
-    float* dataPtr = m_allocatedMemory;
-    for (int ch = 0; ch < m_numChannels; ++ch) {
-        m_channels[ch] = dataPtr;
-        dataPtr += m_numSamples;
+    channels_.reset(new float*[numChannels_]);
+    for (int ch = 0; ch < numChannels_; ++ch) {
+        channels_[ch] = data_.get() + (ch * numSamples_);
     }
 }
 
-void AudioBuffer::deallocateMemory() {
-    delete[] m_tempChannelPointers;
-    m_tempChannelPointers = nullptr;
-    m_tempChannelPointersSize = 0;
-    
-    delete[] m_channels;
-    m_channels = nullptr;
-    
-    std::free(m_allocatedMemory);
-    m_allocatedMemory = nullptr;
-    m_allocatedSize = 0;
-}
-
-void AudioBuffer::copyData(const AudioBuffer& other) {
-    m_numChannels = other.m_numChannels;
-    m_numSamples = other.m_numSamples;
-    m_sampleRate = other.m_sampleRate;
-    
-    if (other.m_allocatedMemory && other.m_allocatedSize > 0) {
-        allocateMemory();
-        std::memcpy(m_allocatedMemory, other.m_allocatedMemory, other.m_allocatedSize);
+void AudioBuffer::deallocateChannels() {
+    channels_.reset();
+    if (data_) {
+        deallocateAligned(data_.release());
     }
+    allocatedBytes_ = 0;
 }
 
-// SIMD-optimized operations
-
-void AudioBuffer::clearSIMD(float* data, int numSamples) {
-    if (!data || numSamples <= 0) return;
+// SIMD operations
+void AudioBuffer::clearSIMD(float* buffer, int numSamples) {
+    if (!buffer || numSamples <= 0) return;
     
 #ifdef __AVX2__
-    // AVX2 implementation - process 8 floats at once
-    const int simdCount = numSamples / 8;
-    const __m256 zero = _mm256_setzero_ps();
+    // Use SIMD for aligned portions
+    int simdSamples = numSamples & ~7;  // Process 8 samples at a time
     
-    for (int i = 0; i < simdCount; ++i) {
-        _mm256_store_ps(data + i * 8, zero);
+    __m256 zero = _mm256_setzero_ps();
+    for (int i = 0; i < simdSamples; i += 8) {
+        _mm256_store_ps(buffer + i, zero);
     }
     
     // Handle remaining samples
-    const int remaining = numSamples % 8;
-    std::memset(data + simdCount * 8, 0, remaining * sizeof(float));
+    for (int i = simdSamples; i < numSamples; ++i) {
+        buffer[i] = 0.0f;
+    }
+#else
+    // Fallback to memset
+    std::memset(buffer, 0, numSamples * sizeof(float));
+#endif
+}
+
+void AudioBuffer::copySIMD(float* dest, const float* source, int numSamples) {
+    if (!dest || !source || numSamples <= 0) return;
     
-#elif defined(__ARM_NEON__)
-    // NEON implementation - process 4 floats at once
-    const int simdCount = numSamples / 4;
-    const float32x4_t zero = vdupq_n_f32(0.0f);
+#ifdef __AVX2__
+    // Use SIMD for aligned portions
+    int simdSamples = numSamples & ~7;
     
-    for (int i = 0; i < simdCount; ++i) {
-        vst1q_f32(data + i * 4, zero);
+    for (int i = 0; i < simdSamples; i += 8) {
+        __m256 data = _mm256_load_ps(source + i);
+        _mm256_store_ps(dest + i, data);
     }
     
     // Handle remaining samples
-    const int remaining = numSamples % 4;
-    std::memset(data + simdCount * 4, 0, remaining * sizeof(float));
+    for (int i = simdSamples; i < numSamples; ++i) {
+        dest[i] = source[i];
+    }
+#else
+    // Fallback to memcpy
+    std::memcpy(dest, source, numSamples * sizeof(float));
+#endif
+}
+
+void AudioBuffer::addSIMD(float* dest, const float* source, int numSamples, float gain) {
+    if (!dest || !source || numSamples <= 0) return;
     
+#ifdef __AVX2__
+    // Use SIMD for aligned portions
+    int simdSamples = numSamples & ~7;
+    __m256 gainVec = _mm256_set1_ps(gain);
+    
+    for (int i = 0; i < simdSamples; i += 8) {
+        __m256 srcData = _mm256_load_ps(source + i);
+        __m256 destData = _mm256_load_ps(dest + i);
+        __m256 scaled = _mm256_mul_ps(srcData, gainVec);
+        __m256 result = _mm256_add_ps(destData, scaled);
+        _mm256_store_ps(dest + i, result);
+    }
+    
+    // Handle remaining samples
+    for (int i = simdSamples; i < numSamples; ++i) {
+        dest[i] += source[i] * gain;
+    }
 #else
     // Fallback implementation
-    std::memset(data, 0, numSamples * sizeof(float));
-#endif
-}
-
-void AudioBuffer::copySIMD(float* dest, const float* src, int numSamples) {
-    if (!dest || !src || numSamples <= 0) return;
-    
-#ifdef __AVX2__
-    const int simdCount = numSamples / 8;
-    
-    for (int i = 0; i < simdCount; ++i) {
-        __m256 srcVec = _mm256_load_ps(src + i * 8);
-        _mm256_store_ps(dest + i * 8, srcVec);
-    }
-    
-    // Handle remaining samples
-    const int remaining = numSamples % 8;
-    std::memcpy(dest + simdCount * 8, src + simdCount * 8, remaining * sizeof(float));
-    
-#elif defined(__ARM_NEON__)
-    const int simdCount = numSamples / 4;
-    
-    for (int i = 0; i < simdCount; ++i) {
-        float32x4_t srcVec = vld1q_f32(src + i * 4);
-        vst1q_f32(dest + i * 4, srcVec);
-    }
-    
-    // Handle remaining samples
-    const int remaining = numSamples % 4;
-    std::memcpy(dest + simdCount * 4, src + simdCount * 4, remaining * sizeof(float));
-    
-#else
-    std::memcpy(dest, src, numSamples * sizeof(float));
-#endif
-}
-
-void AudioBuffer::addSIMD(float* dest, const float* src, int numSamples) {
-    if (!dest || !src || numSamples <= 0) return;
-    
-#ifdef __AVX2__
-    const int simdCount = numSamples / 8;
-    
-    for (int i = 0; i < simdCount; ++i) {
-        __m256 destVec = _mm256_load_ps(dest + i * 8);
-        __m256 srcVec = _mm256_load_ps(src + i * 8);
-        __m256 result = _mm256_add_ps(destVec, srcVec);
-        _mm256_store_ps(dest + i * 8, result);
-    }
-    
-    // Handle remaining samples
-    for (int i = simdCount * 8; i < numSamples; ++i) {
-        dest[i] += src[i];
-    }
-    
-#elif defined(__ARM_NEON__)
-    const int simdCount = numSamples / 4;
-    
-    for (int i = 0; i < simdCount; ++i) {
-        float32x4_t destVec = vld1q_f32(dest + i * 4);
-        float32x4_t srcVec = vld1q_f32(src + i * 4);
-        float32x4_t result = vaddq_f32(destVec, srcVec);
-        vst1q_f32(dest + i * 4, result);
-    }
-    
-    // Handle remaining samples
-    for (int i = simdCount * 4; i < numSamples; ++i) {
-        dest[i] += src[i];
-    }
-    
-#else
     for (int i = 0; i < numSamples; ++i) {
-        dest[i] += src[i];
+        dest[i] += source[i] * gain;
     }
 #endif
 }
 
-void AudioBuffer::multiplySIMD(float* data, int numSamples, float gain) {
-    if (!data || numSamples <= 0) return;
+void AudioBuffer::applySIMD(float* buffer, int numSamples, float gain) {
+    if (!buffer || numSamples <= 0) return;
     
 #ifdef __AVX2__
-    const int simdCount = numSamples / 8;
-    const __m256 gainVec = _mm256_set1_ps(gain);
+    // Use SIMD for aligned portions
+    int simdSamples = numSamples & ~7;
+    __m256 gainVec = _mm256_set1_ps(gain);
     
-    for (int i = 0; i < simdCount; ++i) {
-        __m256 dataVec = _mm256_load_ps(data + i * 8);
-        __m256 result = _mm256_mul_ps(dataVec, gainVec);
-        _mm256_store_ps(data + i * 8, result);
+    for (int i = 0; i < simdSamples; i += 8) {
+        __m256 data = _mm256_load_ps(buffer + i);
+        __m256 result = _mm256_mul_ps(data, gainVec);
+        _mm256_store_ps(buffer + i, result);
     }
     
     // Handle remaining samples
-    for (int i = simdCount * 8; i < numSamples; ++i) {
-        data[i] *= gain;
+    for (int i = simdSamples; i < numSamples; ++i) {
+        buffer[i] *= gain;
     }
-    
-#elif defined(__ARM_NEON__)
-    const int simdCount = numSamples / 4;
-    const float32x4_t gainVec = vdupq_n_f32(gain);
-    
-    for (int i = 0; i < simdCount; ++i) {
-        float32x4_t dataVec = vld1q_f32(data + i * 4);
-        float32x4_t result = vmulq_f32(dataVec, gainVec);
-        vst1q_f32(data + i * 4, result);
-    }
-    
-    // Handle remaining samples
-    for (int i = simdCount * 4; i < numSamples; ++i) {
-        data[i] *= gain;
-    }
-    
 #else
+    // Fallback implementation
     for (int i = 0; i < numSamples; ++i) {
-        data[i] *= gain;
+        buffer[i] *= gain;
     }
 #endif
-}
-
-float AudioBuffer::getMagnitudeSIMD(const float* data, int numSamples) const {
-    if (!data || numSamples <= 0) return 0.0f;
-    
-    float maxMagnitude = 0.0f;
-    
-#ifdef __AVX2__
-    const int simdCount = numSamples / 8;
-    __m256 maxVec = _mm256_setzero_ps();
-    
-    for (int i = 0; i < simdCount; ++i) {
-        __m256 dataVec = _mm256_load_ps(data + i * 8);
-        __m256 absVec = _mm256_andnot_ps(_mm256_set1_ps(-0.0f), dataVec);
-        maxVec = _mm256_max_ps(maxVec, absVec);
-    }
-    
-    // Extract maximum from vector
-    alignas(32) float maxArray[8];
-    _mm256_store_ps(maxArray, maxVec);
-    for (int i = 0; i < 8; ++i) {
-        maxMagnitude = std::max(maxMagnitude, maxArray[i]);
-    }
-    
-    // Handle remaining samples
-    for (int i = simdCount * 8; i < numSamples; ++i) {
-        maxMagnitude = std::max(maxMagnitude, std::abs(data[i]));
-    }
-    
-#else
-    for (int i = 0; i < numSamples; ++i) {
-        maxMagnitude = std::max(maxMagnitude, std::abs(data[i]));
-    }
-#endif
-    
-    return maxMagnitude;
-}
-
-float AudioBuffer::getRMSLevelSIMD(const float* data, int numSamples) const {
-    if (!data || numSamples <= 0) return 0.0f;
-    
-    float sumSquares = 0.0f;
-    
-#ifdef __AVX2__
-    const int simdCount = numSamples / 8;
-    __m256 sumVec = _mm256_setzero_ps();
-    
-    for (int i = 0; i < simdCount; ++i) {
-        __m256 dataVec = _mm256_load_ps(data + i * 8);
-        __m256 squaredVec = _mm256_mul_ps(dataVec, dataVec);
-        sumVec = _mm256_add_ps(sumVec, squaredVec);
-    }
-    
-    // Extract sum from vector
-    alignas(32) float sumArray[8];
-    _mm256_store_ps(sumArray, sumVec);
-    for (int i = 0; i < 8; ++i) {
-        sumSquares += sumArray[i];
-    }
-    
-    // Handle remaining samples
-    for (int i = simdCount * 8; i < numSamples; ++i) {
-        sumSquares += data[i] * data[i];
-    }
-    
-#else
-    for (int i = 0; i < numSamples; ++i) {
-        sumSquares += data[i] * data[i];
-    }
-#endif
-    
-    return std::sqrt(sumSquares / numSamples);
-}
-
-// AudioRingBuffer Implementation
-
-AudioRingBuffer::AudioRingBuffer(int numChannels, int numSamples)
-    : m_numChannels(numChannels), m_bufferSize(numSamples) {
-    m_buffer = std::make_unique<AudioBuffer>(numChannels, numSamples);
-}
-
-AudioRingBuffer::~AudioRingBuffer() = default;
-
-bool AudioRingBuffer::write(const AudioBuffer& source) {
-    if (source.getNumChannels() != m_numChannels) {
-        return false;
-    }
-    
-    const int samplesToWrite = source.getNumSamples();
-    if (getAvailableToWrite() < samplesToWrite) {
-        return false;  // Not enough space
-    }
-    
-    const int writePos = m_writePosition.load();
-    
-    for (int ch = 0; ch < m_numChannels; ++ch) {
-        const float* sourceData = source.getReadPointer(ch);
-        float* bufferData = m_buffer->getWritePointer(ch);
-        
-        for (int i = 0; i < samplesToWrite; ++i) {
-            bufferData[(writePos + i) % m_bufferSize] = sourceData[i];
-        }
-    }
-    
-    m_writePosition.store((writePos + samplesToWrite) % m_bufferSize);
-    return true;
-}
-
-bool AudioRingBuffer::write(const float* const* data, int numSamples) {
-    if (getAvailableToWrite() < numSamples) {
-        return false;
-    }
-    
-    const int writePos = m_writePosition.load();
-    
-    for (int ch = 0; ch < m_numChannels; ++ch) {
-        if (data[ch]) {
-            float* bufferData = m_buffer->getWritePointer(ch);
-            
-            for (int i = 0; i < numSamples; ++i) {
-                bufferData[(writePos + i) % m_bufferSize] = data[ch][i];
-            }
-        }
-    }
-    
-    m_writePosition.store((writePos + numSamples) % m_bufferSize);
-    return true;
-}
-
-bool AudioRingBuffer::read(AudioBuffer& destination) {
-    const int samplesToRead = destination.getNumSamples();
-    if (destination.getNumChannels() != m_numChannels ||
-        getAvailableToRead() < samplesToRead) {
-        return false;
-    }
-    
-    const int readPos = m_readPosition.load();
-    
-    for (int ch = 0; ch < m_numChannels; ++ch) {
-        const float* bufferData = m_buffer->getReadPointer(ch);
-        float* destData = destination.getWritePointer(ch);
-        
-        for (int i = 0; i < samplesToRead; ++i) {
-            destData[i] = bufferData[(readPos + i) % m_bufferSize];
-        }
-    }
-    
-    m_readPosition.store((readPos + samplesToRead) % m_bufferSize);
-    return true;
-}
-
-bool AudioRingBuffer::read(float* const* data, int numSamples) {
-    if (getAvailableToRead() < numSamples) {
-        return false;
-    }
-    
-    const int readPos = m_readPosition.load();
-    
-    for (int ch = 0; ch < m_numChannels; ++ch) {
-        if (data[ch]) {
-            const float* bufferData = m_buffer->getReadPointer(ch);
-            
-            for (int i = 0; i < numSamples; ++i) {
-                data[ch][i] = bufferData[(readPos + i) % m_bufferSize];
-            }
-        }
-    }
-    
-    m_readPosition.store((readPos + numSamples) % m_bufferSize);
-    return true;
-}
-
-int AudioRingBuffer::getAvailableToRead() const {
-    const int writePos = m_writePosition.load();
-    const int readPos = m_readPosition.load();
-    return (writePos - readPos + m_bufferSize) % m_bufferSize;
-}
-
-int AudioRingBuffer::getAvailableToWrite() const {
-    return m_bufferSize - getAvailableToRead() - 1;  // Leave one sample gap
-}
-
-void AudioRingBuffer::clear() {
-    m_readPosition.store(0);
-    m_writePosition.store(0);
-    m_buffer->clear();
 }
 
 } // namespace core

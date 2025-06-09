@@ -1,9 +1,11 @@
 #include "quiet/core/NoiseReductionProcessor.h"
+#include "quiet/core/EventDispatcher.h"
 #include <algorithm>
 #include <cstring>
 #include <chrono>
 #include <stdexcept>
 #include <cmath>
+#include <numeric>
 
 // Include the actual RNNoise library
 extern "C" {
@@ -81,7 +83,14 @@ void NoiseReductionProcessor::shutdown() {
     
     m_workingBuffer.clear();
     m_tempBuffer.clear();
-    m_overlapBuffer.clear();
+    m_floatToShortBuffer.clear();
+    m_shortToFloatBuffer.clear();
+    m_inputQueue.clear();
+    m_outputQueue.clear();
+    m_leftInputQueue.clear();
+    m_rightInputQueue.clear();
+    m_leftOutputQueue.clear();
+    m_rightOutputQueue.clear();
     
     m_isInitialized = false;
     

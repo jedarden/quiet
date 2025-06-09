@@ -98,7 +98,7 @@ private:
     bool openVirtualDevice(const std::string& deviceId);
     void closeVirtualDevice();
     bool writeToDevice(const AudioBuffer& buffer);
-    void handleBufferConversion(const AudioBuffer& input, AudioBuffer& output);
+    void handleBufferConversion(const AudioBuffer& input, juce::AudioSampleBuffer& output);
     
     // Error handling
     void handleDeviceError(const std::string& message, int errorCode);

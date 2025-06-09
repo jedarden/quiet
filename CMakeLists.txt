@@ -74,7 +74,6 @@ target_sources(Quiet PRIVATE
     
     # UI Components
     src/ui/MainWindow.cpp
-    SystemTrayController.cpp
     src/ui/WaveformDisplay.cpp
     src/ui/SpectrumAnalyzer.cpp
     
@@ -246,5 +245,94 @@ if(BUILD_TESTS)
     add_subdirectory(tests)
 endif()
 
-# Include RNNoise
-include(cmake/RNNoise.cmake)
+# CPack Configuration for Installers
+set(CPACK_PACKAGE_NAME "QUIET")
+set(CPACK_PACKAGE_VENDOR "QUIET Development Team")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "AI-Powered Background Noise Removal")
+set(CPACK_PACKAGE_VERSION_MAJOR ${PROJECT_VERSION_MAJOR})
+set(CPACK_PACKAGE_VERSION_MINOR ${PROJECT_VERSION_MINOR})
+set(CPACK_PACKAGE_VERSION_PATCH ${PROJECT_VERSION_PATCH})
+set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+set(CPACK_PACKAGE_HOMEPAGE_URL "https://quietaudio.com")
+set(CPACK_PACKAGE_CONTACT "support@quietaudio.com")
+set(CPACK_PACKAGE_DESCRIPTION_FILE "${CMAKE_CURRENT_SOURCE_DIR}/README.md")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "QUIET")
+
+# Set package file name
+set(CPACK_PACKAGE_FILE_NAME "QUIET-${PROJECT_VERSION}-${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}")
+
+# Common files to include
+set(CPACK_PACKAGE_EXECUTABLES "Quiet;QUIET")
+
+# Platform-specific installer configurations
+if(WIN32)
+    # Windows NSIS Installer
+    set(CPACK_GENERATOR "NSIS")
+    set(CPACK_NSIS_DISPLAY_NAME "QUIET")
+    set(CPACK_NSIS_PACKAGE_NAME "QUIET - AI-Powered Background Noise Removal")
+    set(CPACK_NSIS_HELP_LINK "https://quietaudio.com/support")
+    set(CPACK_NSIS_URL_INFO_ABOUT "https://quietaudio.com")
+    set(CPACK_NSIS_CONTACT "support@quietaudio.com")
+    set(CPACK_NSIS_MODIFY_PATH ON)
+    set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
+    
+    # Create shortcuts
+    set(CPACK_NSIS_CREATE_ICONS_EXTRA
+        "CreateShortCut '$SMPROGRAMS\\\\$STARTMENU_FOLDER\\\\QUIET.lnk' '$INSTDIR\\\\bin\\\\Quiet.exe'"
+        "CreateShortCut '$DESKTOP\\\\QUIET.lnk' '$INSTDIR\\\\bin\\\\Quiet.exe'"
+    )
+    set(CPACK_NSIS_DELETE_ICONS_EXTRA
+        "Delete '$SMPROGRAMS\\\\$START_MENU\\\\QUIET.lnk'"
+        "Delete '$DESKTOP\\\\QUIET.lnk'"
+    )
+    
+    # Install VB-Cable prompt
+    set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS
+        "MessageBox MB_YESNO 'QUIET requires VB-Audio Virtual Cable for virtual device functionality. Would you like to download and install it now?' /SD IDYES IDNO skip_vbcable
+         ExecShell 'open' 'https://vb-audio.com/Cable/index.htm'
+         skip_vbcable:"
+    )
+    
+    # MUI settings
+    set(CPACK_NSIS_MUI_ICON "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/icon.ico")
+    set(CPACK_NSIS_MUI_UNIICON "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/icon.ico")
+    
+    # Install directory permissions
+    set(CPACK_NSIS_DEFINES "RequestExecutionLevel admin")
+    
+elseif(APPLE)
+    # macOS DMG Installer
+    set(CPACK_GENERATOR "DragNDrop")
+    set(CPACK_DMG_VOLUME_NAME "QUIET")
+    set(CPACK_DMG_DS_STORE_SETUP_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/installer/macos/dmg_setup.scpt")
+    set(CPACK_DMG_BACKGROUND_IMAGE "${CMAKE_CURRENT_SOURCE_DIR}/installer/macos/dmg_background.png")
+    
+    # Bundle settings
+    set(CPACK_BUNDLE_NAME "QUIET")
+    set(CPACK_BUNDLE_ICON "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/icon.icns")
+    set(CPACK_BUNDLE_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/installer/macos/Info.plist")
+    
+    # Code signing (configure these with your certificate)
+    if(DEFINED ENV{MACOS_CERTIFICATE_NAME})
+        set(CPACK_BUNDLE_APPLE_CERT_APP "$ENV{MACOS_CERTIFICATE_NAME}")
+        set(CPACK_BUNDLE_APPLE_CODESIGN_PARAMETER "--deep --force --verify --verbose --options runtime")
+    endif()
+    
+elseif(UNIX)
+    # Linux installers
+    set(CPACK_GENERATOR "DEB;RPM;TGZ")
+    
+    # Debian package
+    set(CPACK_DEBIAN_PACKAGE_MAINTAINER "QUIET Development Team")
+    set(CPACK_DEBIAN_PACKAGE_SECTION "sound")
+    set(CPACK_DEBIAN_PACKAGE_DEPENDS "libasound2, libfreetype6, libx11-6, libxext6, libxinerama1, libxrandr2, libxcursor1, libgl1")
+    
+    # RPM package
+    set(CPACK_RPM_PACKAGE_LICENSE "MIT")
+    set(CPACK_RPM_PACKAGE_GROUP "Applications/Multimedia")
+    set(CPACK_RPM_PACKAGE_REQUIRES "alsa-lib, freetype, libX11, libXext, libXinerama, libXrandr, libXcursor, mesa-libGL")
+endif()
+
+# Include CPack
+include(CPack)

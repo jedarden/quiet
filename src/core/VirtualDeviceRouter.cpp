@@ -1,6 +1,10 @@
 #include "quiet/core/VirtualDeviceRouter.h"
+#include "quiet/core/EventDispatcher.h"
 #include <algorithm>
 #include <cmath>
+#include <mutex>
+#include <thread>
+#include <cstring>
 
 #ifdef _WIN32
     #include <windows.h>
@@ -304,34 +308,48 @@ private:
                                  AudioBufferList* ioData) {
         auto* impl = static_cast<MacOSVirtualDeviceImpl*>(inRefCon);
         
-        if (impl->m_renderData.dataReady.load()) {
-            for (UInt32 i = 0; i < ioData->mNumberBuffers; i++) {
-                float* out = static_cast<float*>(ioData->mBuffers[i].mData);
-                const float* in = impl->m_renderData.buffer;
-                
-                int samplesToWrite = std::min(static_cast<int>(inNumberFrames), 
-                                            impl->m_renderData.numSamples);
-                
-                if (i < impl->m_renderData.numChannels) {
-                    // Copy channel data
-                    for (int j = 0; j < samplesToWrite; j++) {
-                        out[j] = in[j * impl->m_renderData.numChannels + i];
-                    }
-                } else {
-                    // Fill with silence
-                    memset(out, 0, inNumberFrames * sizeof(float));
-                }
-            }
-            
-            impl->m_renderData.dataReady = false;
-        } else {
-            // No data ready, output silence
+        if (!impl->m_renderData.dataReady.load()) {
+            // No data available, fill with silence
             for (UInt32 i = 0; i < ioData->mNumberBuffers; i++) {
                 memset(ioData->mBuffers[i].mData, 0, 
                        ioData->mBuffers[i].mDataByteSize);
             }
+            return noErr;
         }
         
+        // Copy data from our buffer
+        const float* sourceData = impl->m_renderData.buffer;
+        int sourceSamples = impl->m_renderData.numSamples;
+        int sourceChannels = impl->m_renderData.numChannels;
+        
+        UInt32 framesToCopy = std::min(inNumberFrames, 
+                                      static_cast<UInt32>(sourceSamples));
+        
+        for (UInt32 bufferIndex = 0; bufferIndex < ioData->mNumberBuffers; 
+             bufferIndex++) {
+            float* outputBuffer = static_cast<float*>(
+                ioData->mBuffers[bufferIndex].mData);
+            UInt32 channelCount = ioData->mBuffers[bufferIndex].mNumberChannels;
+            
+            for (UInt32 frame = 0; frame < framesToCopy; frame++) {
+                for (UInt32 channel = 0; channel < channelCount; channel++) {
+                    int sourceChannel = std::min(static_cast<int>(channel), 
+                                               sourceChannels - 1);
+                    outputBuffer[frame * channelCount + channel] = 
+                        sourceData[frame * sourceChannels + sourceChannel];
+                }
+            }
+            
+            // Fill remaining frames with silence
+            if (framesToCopy < inNumberFrames) {
+                size_t remainingBytes = (inNumberFrames - framesToCopy) * 
+                                      channelCount * sizeof(float);
+                memset(outputBuffer + framesToCopy * channelCount, 0, 
+                       remainingBytes);
+            }
+        }
+        
+        impl->m_renderData.dataReady = false;
         return noErr;
     }
     
@@ -1032,7 +1050,7 @@ bool VirtualDeviceRouter::isVirtualDevice(const std::string& deviceName) const {
 }
 
 void VirtualDeviceRouter::handleBufferConversion(const AudioBuffer& input, 
-                                                AudioBuffer& output) {
+                                                juce::AudioSampleBuffer& output) {
     // Simple channel mapping and resampling if needed
     int inputChannels = input.getNumChannels();
     int outputChannels = output.getNumChannels();

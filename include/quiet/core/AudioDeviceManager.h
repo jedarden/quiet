@@ -107,6 +107,10 @@ private:
     int m_currentBufferSize{256};
     bool m_isInitialized{false};
     bool m_isAudioActive{false};
+    
+    // Device change listener
+    class DeviceChangeListener;
+    std::unique_ptr<DeviceChangeListener> m_deviceChangeListener;
 };
 
 } // namespace core

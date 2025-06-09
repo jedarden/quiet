@@ -1,11 +1,12 @@
-#include <juce_gui_basics/juce_gui_basics.h>
+#include <JuceHeader.h>
 #include <memory>
+#include <iostream>
 #include "quiet/core/EventDispatcher.h"
 #include "quiet/core/AudioDeviceManager.h"
 #include "quiet/core/NoiseReductionProcessor.h"
 #include "quiet/core/ConfigurationManager.h"
+#include "quiet/core/VirtualDeviceRouter.h"
 #include "quiet/ui/MainWindow.h"
-#include "quiet/ui/SystemTrayController.h"
 #include "quiet/utils/Logger.h"
 
 /**
@@ -31,15 +32,17 @@ public:
 
     void initialise(const juce::String& commandLine) override {
         // Initialize logging
-        quiet::utils::Logger::getInstance().initialize("QUIET", quiet::utils::Logger::Level::Info);
-        LOG_INFO("Starting QUIET application v{}", getApplicationVersion().toStdString());
+        quiet::utils::Logger::getInstance().initialize("quiet.log", quiet::utils::Logger::Level::INFO);
+        quiet::utils::Logger::getInstance().log(quiet::utils::Logger::Level::INFO, "QUIET",
+            "Starting QUIET application v" + getApplicationVersion().toStdString());
 
         // Parse command line arguments
         parseCommandLine(commandLine);
 
         // Initialize core subsystems
         if (!initializeSubsystems()) {
-            LOG_ERROR("Failed to initialize core subsystems");
+            quiet::utils::Logger::getInstance().log(quiet::utils::Logger::Level::ERROR, "QUIET",
+                "Failed to initialize core subsystems");
             setApplicationReturnValue(1);
             quit();
             return;
@@ -48,36 +51,38 @@ public:
         // Create and show main window
         createMainWindow();
         
-        LOG_INFO("QUIET application initialized successfully");
+        quiet::utils::Logger::getInstance().log(quiet::utils::Logger::Level::INFO, "QUIET",
+            "QUIET application initialized successfully");
     }
 
     void shutdown() override {
-        LOG_INFO("Shutting down QUIET application");
+        quiet::utils::Logger::getInstance().log(quiet::utils::Logger::Level::INFO, "QUIET",
+            "Shutting down QUIET application");
         
         // Save configuration
         if (m_configManager) {
             m_configManager->saveConfiguration();
         }
         
-        // Shutdown subsystems in reverse order
-        m_mainWindow.reset();
-        m_systemTray.reset();
-        
-        if (m_audioManager) {
-            m_audioManager->stopAudio();
-            m_audioManager->shutdown();
+        // Stop audio processing
+        if (m_virtualRouter) {
+            m_virtualRouter->stopRouting();
         }
         
+        if (m_audioManager) {
+            m_audioManager->stopAudioStream();
+        }
+        
+        // Shutdown subsystems in reverse order
+        m_mainWindow.reset();
+        m_virtualRouter.reset();
         m_noiseProcessor.reset();
         m_audioManager.reset();
         m_configManager.reset();
-        
-        if (m_eventDispatcher) {
-            m_eventDispatcher->stop();
-        }
         m_eventDispatcher.reset();
         
-        LOG_INFO("QUIET application shutdown complete");
+        quiet::utils::Logger::getInstance().log(quiet::utils::Logger::Level::INFO, "QUIET",
+            "QUIET application shutdown complete");
     }
 
     void systemRequestedQuit() override {
@@ -88,7 +93,8 @@ public:
     void anotherInstanceStarted(const juce::String& commandLine) override {
         // Show main window if another instance is started
         if (m_mainWindow) {
-            m_mainWindow->showWindow();
+            m_mainWindow->setVisible(true);
+            m_mainWindow->toFront(true);
         }
     }
 
@@ -101,7 +107,7 @@ private:
             if (arg == "--minimized" || arg == "-m") {
                 m_startMinimized = true;
             } else if (arg == "--debug" || arg == "-d") {
-                quiet::utils::Logger::getInstance().setLevel(quiet::utils::Logger::Level::Debug);
+                quiet::utils::Logger::getInstance().setLevel(quiet::utils::Logger::Level::DEBUG);
             } else if (arg == "--help" || arg == "-h") {
                 showUsage();
                 quit();
@@ -128,60 +134,138 @@ private:
 
             // Configuration manager
             m_configManager = std::make_unique<quiet::core::ConfigurationManager>(*m_eventDispatcher);
-            if (!m_configManager->initialize()) {
-                LOG_ERROR("Failed to initialize configuration manager");
-                return false;
-            }
+            m_configManager->loadConfiguration();
 
             // Audio device manager
             m_audioManager = std::make_unique<quiet::core::AudioDeviceManager>(*m_eventDispatcher);
             if (!m_audioManager->initialize()) {
-                LOG_ERROR("Failed to initialize audio device manager");
+                quiet::utils::Logger::getInstance().log(quiet::utils::Logger::Level::ERROR, "QUIET",
+                    "Failed to initialize audio device manager");
                 return false;
             }
 
             // Noise reduction processor
             m_noiseProcessor = std::make_unique<quiet::core::NoiseReductionProcessor>(*m_eventDispatcher);
             if (!m_noiseProcessor->initialize()) {
-                LOG_ERROR("Failed to initialize noise reduction processor");
+                quiet::utils::Logger::getInstance().log(quiet::utils::Logger::Level::ERROR, "QUIET",
+                    "Failed to initialize noise reduction processor");
                 return false;
             }
+            
+            // Virtual device router
+            m_virtualRouter = std::make_unique<quiet::core::VirtualDeviceRouter>(*m_eventDispatcher);
+            if (!m_virtualRouter->initialize()) {
+                quiet::utils::Logger::getInstance().log(quiet::utils::Logger::Level::WARNING, "QUIET",
+                    "Virtual device router initialization failed - routing disabled");
+            }
+            
+            // Check virtual device installation
+            checkVirtualDeviceSetup();
 
             // Connect audio pipeline
-            m_audioManager->setAudioCallback([this](const quiet::core::AudioBuffer& buffer) {
-                handleAudioCallback(buffer);
-            });
-
-            // System tray controller
-            m_systemTray = std::make_unique<quiet::ui::SystemTrayController>(
-                *m_eventDispatcher, *m_audioManager, *m_noiseProcessor);
+            m_audioManager->setAudioCallback(
+                [this](const quiet::core::AudioBuffer& input, quiet::core::AudioBuffer& output) {
+                    processAudioBlock(input, output);
+                });
+                
+            // Start audio stream
+            if (!m_audioManager->startAudioStream()) {
+                quiet::utils::Logger::getInstance().log(quiet::utils::Logger::Level::ERROR, "QUIET",
+                    "Failed to start audio stream");
+                return false;
+            }
+            
+            // Start virtual routing if available
+            if (m_virtualRouter && m_virtualRouter->hasVirtualDevice()) {
+                m_virtualRouter->startRouting();
+            }
 
             return true;
         } catch (const std::exception& e) {
-            LOG_ERROR("Exception during subsystem initialization: {}", e.what());
+            quiet::utils::Logger::getInstance().log(quiet::utils::Logger::Level::ERROR, "QUIET",
+                std::string("Exception during subsystem initialization: ") + e.what());
             return false;
         }
     }
 
     void createMainWindow() {
-        m_mainWindow = std::make_unique<quiet::ui::MainWindow>(
-            "QUIET", *m_eventDispatcher, *m_audioManager, *m_noiseProcessor);
+        m_mainWindow = quiet::ui::MainWindow::create(
+            *m_audioManager, *m_configManager, *m_eventDispatcher);
 
-        if (m_startMinimized) {
-            m_mainWindow->minimizeToTray();
-        } else {
-            m_mainWindow->showWindow();
+        if (!m_mainWindow) {
+            quiet::utils::Logger::getInstance().log(quiet::utils::Logger::Level::ERROR, "QUIET",
+                "Failed to create main window");
+            return;
+        }
+        
+        if (!m_startMinimized) {
+            m_mainWindow->setVisible(true);
         }
     }
 
-    void handleAudioCallback(const quiet::core::AudioBuffer& inputBuffer) {
+    void processAudioBlock(const quiet::core::AudioBuffer& input, quiet::core::AudioBuffer& output) {
         // Process audio through noise reduction
-        if (m_noiseProcessor && m_noiseProcessor->isEnabled()) {
-            auto processedBuffer = inputBuffer;  // Copy for processing
-            m_noiseProcessor->process(processedBuffer);
+        if (m_noiseProcessor && m_noiseProcessor->isInitialized()) {
+            // Create a copy for processing
+            quiet::core::AudioBuffer processedBuffer(input.getNumChannels(),
+                                                   input.getNumSamples(),
+                                                   input.getSampleRate());
+            processedBuffer.copyFrom(input);
             
-            // Send processed audio to virtual device
-            // This would be handled by VirtualDeviceRouter in full implementation
+            // Apply noise reduction
+            m_noiseProcessor->processBuffer(processedBuffer);
+            
+            // Copy to output
+            output.copyFrom(processedBuffer);
+            
+            // Route to virtual device if enabled
+            if (m_virtualRouter && m_virtualRouter->isRouting()) {
+                m_virtualRouter->routeAudioBuffer(output);
+            }
+            
+            // Update level meters
+            publishAudioLevels(input, output);
+        } else {
+            // Passthrough if processing is disabled
+            output.copyFrom(input);
+        }
+    }
+    
+    void publishAudioLevels(const quiet::core::AudioBuffer& input,
+                           const quiet::core::AudioBuffer& output) {
+        float inputLevel = input.getRMSLevel(0, 0, input.getNumSamples());
+        float outputLevel = output.getRMSLevel(0, 0, output.getNumSamples());
+        
+        auto eventData = quiet::core::EventDataFactory::createAudioLevelData(inputLevel, true);
+        m_eventDispatcher->publish(quiet::core::EventType::AudioLevelChanged, eventData);
+        
+        eventData = quiet::core::EventDataFactory::createAudioLevelData(outputLevel, false);
+        m_eventDispatcher->publish(quiet::core::EventType::AudioLevelChanged, eventData);
+    }
+    
+    void checkVirtualDeviceSetup() {
+        if (!quiet::core::VirtualDeviceRouter::isVirtualDeviceInstalled()) {
+            auto result = juce::AlertWindow::showYesNoCancelBox(
+                juce::AlertWindow::InfoIcon,
+                "Virtual Audio Device Required",
+                "QUIET requires a virtual audio device to route processed audio to other applications.\n\n" +
+                quiet::core::VirtualDeviceRouter::getVirtualDeviceInstallInstructions() + "\n\n" +
+                "Would you like to open the download page?",
+                "Open Download Page",
+                "Continue Without",
+                "Quit"
+            );
+            
+            if (result == 1) {  // Yes - Open download page
+            #ifdef _WIN32
+                juce::URL("https://vb-audio.com/Cable/").launchInDefaultBrowser();
+            #elif __APPLE__
+                juce::URL("https://existential.audio/blackhole/").launchInDefaultBrowser();
+            #endif
+            } else if (result == 0) {  // Cancel - Quit
+                quit();
+            }
+            // Continue without virtual device if result == 2
         }
     }
 
@@ -190,9 +274,9 @@ private:
     std::unique_ptr<quiet::core::ConfigurationManager> m_configManager;
     std::unique_ptr<quiet::core::AudioDeviceManager> m_audioManager;
     std::unique_ptr<quiet::core::NoiseReductionProcessor> m_noiseProcessor;
+    std::unique_ptr<quiet::core::VirtualDeviceRouter> m_virtualRouter;
     
     std::unique_ptr<quiet::ui::MainWindow> m_mainWindow;
-    std::unique_ptr<quiet::ui::SystemTrayController> m_systemTray;
 
     // Command line options
     bool m_startMinimized{false};

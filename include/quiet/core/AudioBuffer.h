@@ -60,6 +60,8 @@ public:
                   const AudioBuffer& source, int sourceChannel,
                   int sourceStartSample, int numSamples);
     void copyFrom(const AudioBuffer& source);
+    void copyFrom(int destChannel, int destStartSample,
+                  const float* source, int numSamples);
     
     // Add operations
     void addFrom(int destChannel, int destStartSample,
