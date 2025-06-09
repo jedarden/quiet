@@ -1,0 +1,99 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Setup Build Environment
+        uses: ilammy/msvc-dev-cmd@v1
+        
+      - name: Install JUCE Dependencies
+        run: |
+          choco install visualstudio2022-workload-nativedesktop
+          
+      - name: Configure CMake
+        run: cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+        
+      - name: Build
+        run: cmake --build build --config Release
+        
+      - name: Create Installer
+        run: |
+          choco install nsis
+          makensis installer/windows/quiet_installer.nsi
+          
+      - name: Generate Checksum
+        shell: pwsh
+        run: |
+          $hash = Get-FileHash -Path "installer/windows/QUIET-Setup.exe" -Algorithm SHA256
+          "$($hash.Hash.ToLower())  QUIET-Setup.exe" | Out-File -FilePath "installer/windows/SHA256SUM"
+          
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: windows-installer
+          path: |
+            installer/windows/QUIET-Setup.exe
+            installer/windows/SHA256SUM
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Install Dependencies
+        run: |
+          brew install cmake
+          
+      - name: Configure CMake
+        run: cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+        
+      - name: Build
+        run: cmake --build build --config Release
+        
+      - name: Create DMG
+        run: |
+          ./installer/macos/create_dmg.sh
+          
+      - name: Generate Checksum
+        run: |
+          shasum -a 256 QUIET.dmg > SHA256SUM
+          
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: macos-installer
+          path: |
+            QUIET.dmg
+            SHA256SUM
+
+  create-release:
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Download Artifacts
+        uses: actions/download-artifact@v3
+        
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            windows-installer/QUIET-Setup.exe
+            windows-installer/SHA256SUM
+            macos-installer/QUIET.dmg
+            macos-installer/SHA256SUM
+          body_path: releases/RELEASE_NOTES.md
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

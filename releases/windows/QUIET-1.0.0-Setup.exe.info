@@ -1,0 +1,9 @@
+QUIET 1.0.0 Windows Installer
+Build Date: 20250609
+Platform: Windows 10/11 x64
+Size: ~45MB (estimated)
+Requirements: 
+  - Windows 10 version 1903 or later
+  - 4GB RAM minimum
+  - VB-Cable (will prompt to install)
+  - Administrator privileges for installation

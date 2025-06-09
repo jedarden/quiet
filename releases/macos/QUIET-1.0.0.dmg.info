@@ -1,0 +1,9 @@
+QUIET 1.0.0 macOS Installer
+Build Date: 20250609
+Platform: macOS 10.15+ (Intel & Apple Silicon)
+Size: ~40MB (estimated)
+Requirements:
+  - macOS 10.15 Catalina or later
+  - 4GB RAM minimum
+  - BlackHole audio driver (will prompt to install)
+  - Microphone permissions
