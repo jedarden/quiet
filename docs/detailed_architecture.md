@@ -1,48 +1,48 @@
-# Detailed System Architecture - QUIET Application
+# QUIET - Detailed System Architecture
 
-## 1. Component Architecture
+## 1. Overview
 
-### 1.1 Core Components Overview
+This document provides the detailed technical architecture for QUIET, including component specifications, interface contracts, data models, and infrastructure design.
+
+## 2. Component Architecture
+
+### 2.1 System Component Diagram
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                         QUIET Application                          │
-├──────────────────────────────────────────────────────────────────┤
-│                      Application Layer                             │
-│  ┌────────────────┐  ┌─────────────────┐  ┌──────────────────┐  │
-│  │ Main App       │  │ Event Dispatcher│  │ Config Manager  │  │
-│  │ Controller     │  │                 │  │                 │  │
-│  └────────────────┘  └─────────────────┘  └──────────────────┘  │
-├──────────────────────────────────────────────────────────────────┤
-│                         Audio Layer                                │
-│  ┌────────────────┐  ┌─────────────────┐  ┌──────────────────┐  │
-│  │ Audio Device   │  │ Audio Processor │  │ Virtual Device  │  │
-│  │ Manager        │  │ Pipeline        │  │ Router          │  │
-│  └────────────────┘  └─────────────────┘  └──────────────────┘  │
-│  ┌────────────────┐  ┌─────────────────┐  ┌──────────────────┐  │
-│  │ Audio Buffer   │  │ Noise Reduction │  │ Resampler       │  │
-│  │ Manager        │  │ Processor       │  │                 │  │
-│  └────────────────┘  └─────────────────┘  └──────────────────┘  │
-├──────────────────────────────────────────────────────────────────┤
-│                          UI Layer                                  │
-│  ┌────────────────┐  ┌─────────────────┐  ┌──────────────────┐  │
-│  │ Main Window    │  │ System Tray     │  │ Settings Dialog │  │
-│  │                │  │ Controller      │  │                 │  │
-│  └────────────────┘  └─────────────────┘  └──────────────────┘  │
-│  ┌────────────────┐  ┌─────────────────┐  ┌──────────────────┐  │
-│  │ Waveform       │  │ Spectrum        │  │ Level Meters    │  │
-│  │ Display        │  │ Analyzer        │  │                 │  │
-│  └────────────────┘  └─────────────────┘  └──────────────────┘  │
-├──────────────────────────────────────────────────────────────────┤
-│                      Platform Layer                                │
-│  ┌────────────────┐  ┌─────────────────┐  ┌──────────────────┐  │
-│  │ Windows Audio  │  │ macOS Audio     │  │ Virtual Device  │  │
-│  │ HAL (WASAPI)   │  │ HAL (CoreAudio) │  │ Drivers         │  │
-│  └────────────────┘  └─────────────────┘  └──────────────────┘  │
-└──────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────┐
+│                           QUIET Application                             │
+├──────────────────────────────────────────────────────────────────────────┤
+│                         Application Core                                │
+│  ┌────────────────────┐  ┌────────────────────┐  ┌────────────────────┐  │
+│  │  QuietApplication  │  │  EventDispatcher   │  │ ConfigurationMgr   │  │
+│  │   (Singleton)      │  │  (Thread-Safe)     │  │  (Persistent)      │  │
+│  └────────────────────┘  └────────────────────┘  └────────────────────┘  │
+├──────────────────────────────────────────────────────────────────────────┤
+│                      Audio Processing Layer                             │
+│  ┌────────────────────┐  ┌────────────────────┐  ┌────────────────────┐  │
+│  │ AudioDeviceManager │  │NoiseReductionProc  │  │VirtualDeviceRouter │  │
+│  │ • Device Enum      │  │ • RNNoise Core    │  │ • VB-Cable (Win)  │  │
+│  │ • Hot-plug Detect  │  │ • 48kHz Resample  │  │ • BlackHole (Mac) │  │
+│  │ • Buffer Manage    │  │ • Level Control   │  │ • Auto-reconnect  │  │
+│  └────────────────────┘  └────────────────────┘  └────────────────────┘  │
+│                                                                         │
+│  ┌────────────────────┐  ┌────────────────────┐  ┌────────────────────┐  │
+│  │  AudioBuffer       │  │  LockFreeQueue     │  │  AudioResampler    │  │
+│  │ • Lock-free ops   │  │ • SPSC optimized  │  │ • High quality    │  │
+│  │ • Zero-copy       │  │ • Cache aligned   │  │ • Low latency     │  │
+│  └────────────────────┘  └────────────────────┘  └────────────────────┘  │
+├──────────────────────────────────────────────────────────────────────────┤
+│                     User Interface Layer                                │
+│  ┌────────────────────┐  ┌────────────────────┐  ┌────────────────────┐  │
+│  │    MainWindow      │  │ SystemTrayControl  │  │  Visualizations    │  │
+│  │ • Device Select   │  │ • Quick Toggle    │  │ • WaveformDisplay │  │
+│  │ • Enable Toggle   │  │ • Status Menu     │  │ • SpectrumAnalyze │  │
+│  │ • Level Control   │  │ • Auto-minimize   │  │ • LevelMeters     │  │
+│  └────────────────────┘  └────────────────────┘  └────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 1.2 Component Specifications
+### 2.2 Core Component Specifications
 
 #### AudioDeviceManager
 ```cpp

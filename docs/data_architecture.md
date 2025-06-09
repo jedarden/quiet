@@ -1,52 +1,90 @@
-# Data Architecture - QUIET Application
+# QUIET - Data Architecture Document
 
-## 1. Data Models
+## 1. Overview
 
-### 1.1 Core Data Structures
+This document defines the data models, flow patterns, storage mechanisms, and synchronization strategies for QUIET's real-time audio processing system.
 
-#### AudioFrame
+## 2. Core Data Models
+
+### 2.1 Audio Data Structures
+
 ```cpp
-struct AudioFrame {
-    static constexpr size_t MAX_CHANNELS = 2;
-    static constexpr size_t FRAME_SIZE = 512;
+// Core audio buffer structure - zero-copy, cache-aligned
+struct alignas(64) AudioBuffer {
+    static constexpr size_t MAX_CHANNELS = 32;
+    static constexpr size_t MAX_SAMPLES = 8192;
     
-    float samples[MAX_CHANNELS][FRAME_SIZE];
-    size_t numChannels;
-    size_t numSamples;
+    // Audio data - interleaved for cache efficiency
+    float* data[MAX_CHANNELS];
+    
+    // Buffer metadata
+    uint32_t channelCount;
+    uint32_t sampleCount;
     double sampleRate;
-    int64_t timestamp;
     
-    // Metadata
-    float peakLevel;
-    float rmsLevel;
-    bool clipped;
+    // Timing information
+    int64_t timestamp;      // Sample clock timestamp
+    int64_t hostTime;       // System time in microseconds
+    
+    // Audio statistics
+    float peakLevel[MAX_CHANNELS];
+    float rmsLevel[MAX_CHANNELS];
+    uint32_t clippedSamples;
+    
+    // Memory management
+    bool ownsMemory;
+    size_t allocatedSize;
+    
+    // Methods
+    void clear() noexcept;
+    void copyFrom(const AudioBuffer& other) noexcept;
+    float getMagnitude(uint32_t channel, uint32_t sample) const noexcept;
 };
 ```
 
-#### DeviceConfiguration
+### 2.2 Device and Configuration Models
+
 ```cpp
-struct DeviceConfiguration {
-    String deviceId;
-    String deviceName;
-    DeviceType type;
-    
-    // Audio parameters
-    double sampleRate;
-    int bufferSize;
-    int bitDepth;
-    int numChannels;
+// Audio device information model
+struct AudioDevice {
+    // Identification
+    std::string deviceId;       // Unique platform ID
+    std::string displayName;    // User-friendly name
+    DeviceType type;           // Input/Output/Duplex
     
     // Capabilities
-    std::vector<double> supportedSampleRates;
-    std::vector<int> supportedBufferSizes;
-    Range<int> channelRange;
+    struct Capabilities {
+        std::vector<double> sampleRates;     // Supported rates
+        std::vector<uint32_t> bufferSizes;   // Supported buffer sizes
+        uint32_t minChannels;
+        uint32_t maxChannels;
+        std::vector<AudioFormat> formats;     // PCM16, PCM24, Float32, etc.
+        bool exclusiveModeSupported;
+        bool loopbackSupported;
+    } capabilities;
     
-    // State
-    bool isActive;
-    bool isDefault;
-    Time lastUsed;
+    // Current configuration
+    struct Configuration {
+        double sampleRate = 48000.0;
+        uint32_t bufferSize = 256;
+        uint32_t channels = 1;
+        AudioFormat format = AudioFormat::Float32;
+        bool exclusiveMode = false;
+    } config;
+    
+    // Runtime state
+    struct State {
+        bool isActive = false;
+        bool isDefault = false;
+        bool isAvailable = true;
+        std::chrono::time_point<std::chrono::steady_clock> lastSeen;
+        uint32_t dropoutCount = 0;
+        float cpuUsage = 0.0f;
+    } state;
 };
 ```
+
+### 2.3 Processing State Models
 
 #### ProcessingMetrics
 ```cpp
