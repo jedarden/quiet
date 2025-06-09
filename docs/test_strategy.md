@@ -1,98 +1,358 @@
-# Test Strategy - QUIET Application
+# QUIET - Test Strategy Document
 
-## 1. Testing Philosophy
+## 1. Overview
 
-### TDD London School Approach
+This document defines the comprehensive testing strategy for QUIET, ensuring high quality, reliability, and performance through Test-Driven Development (TDD) using the London School approach.
+
+## 2. Testing Philosophy
+
+### 2.1 TDD London School Principles
 - **Test First**: Write tests before implementation
 - **Outside-In**: Start from user-facing features, work inward
-- **Mock Dependencies**: Isolate units under test
-- **Behavior Focus**: Test behavior, not implementation
-- **Fast Feedback**: Tests must run quickly
+- **Mock Dependencies**: Isolate units under test for fast, focused tests
+- **Behavior Focus**: Test behavior and interactions, not implementation details
+- **Fast Feedback**: All unit tests must run in under 10 seconds
+- **100% Coverage Target**: Achieve comprehensive test coverage
 
-## 2. Test Architecture
+## 3. Test Architecture
 
-### 2.1 Test Pyramid
+### 3.1 Test Pyramid Strategy
 ```
          /\
         /  \    E2E Tests (5%)
-       /____\   - User workflows
-      /      \  - System integration
+       /____\   - Complete user workflows
+      /      \  - Virtual device integration
      /________\ Integration Tests (15%)
-    /          \ - Component interaction
-   /____________\- Platform-specific
+    /          \ - Audio pipeline validation
+   /____________\- Platform-specific features
   /              \ Unit Tests (80%)
- /________________\- Business logic
-                   - Algorithms
+ /________________\- Core algorithms
+                   - Business logic
                    - Data structures
 ```
 
-### 2.2 Test Categories
+### 3.2 Test Categories and Targets
 
-#### Unit Tests
-- **Scope**: Individual classes and functions
-- **Speed**: <1ms per test
-- **Dependencies**: All mocked
-- **Coverage Target**: 80%+
+| Category | Coverage Target | Max Execution Time | Focus Areas |
+|----------|----------------|-------------------|-------------|
+| Unit Tests | 100% | <10ms per test | Algorithms, processors, utilities |
+| Integration Tests | 90% | <100ms per test | Audio pipeline, device management |
+| E2E Tests | Critical paths | <5s per test | User workflows, system integration |
+| Performance Tests | Key metrics | <30s per test | Latency, CPU, memory usage |
 
-#### Integration Tests
-- **Scope**: Component interactions
-- **Speed**: <100ms per test
-- **Dependencies**: Real where necessary
-- **Focus**: Audio pipeline, device integration
+## 4. Unit Test Strategy
 
-#### End-to-End Tests
-- **Scope**: Complete user workflows
-- **Speed**: <5s per test
-- **Dependencies**: Full system
-- **Focus**: Critical paths only
+### 4.1 Core Algorithm Tests
 
-## 3. Unit Test Strategy
-
-### 3.1 Audio Processing Tests
-
-```cpp
-// Test: Noise reduction improves SNR
-TEST(NoiseReductionTest, ImprovesSNR) {
-    // Arrange
-    auto processor = createTestProcessor();
-    auto testSignal = generateSineWave(1000.0f, 48000);
-    auto noise = generateWhiteNoise(0.1f, 48000);
-    auto noisySignal = mixSignals(testSignal, noise);
-    
-    // Act
-    auto processed = processor->process(noisySignal);
-    
-    // Assert
-    float snrBefore = calculateSNR(testSignal, noisySignal);
-    float snrAfter = calculateSNR(testSignal, processed);
-    EXPECT_GT(snrAfter - snrBefore, 10.0f); // >10dB improvement
-}
-
-// Test: Processing latency within bounds
-TEST(NoiseReductionTest, MeetsLatencyRequirement) {
-    // Arrange
-    auto processor = createTestProcessor();
-    auto testBuffer = createTestBuffer(256, 48000);
-    
-    // Act
-    auto start = getHighResTime();
-    processor->process(testBuffer);
-    auto elapsed = getHighResTime() - start;
-    
-    // Assert
-    EXPECT_LT(elapsed, 30.0); // <30ms
-}
-
-// Test: Handles edge cases gracefully
-TEST(NoiseReductionTest, HandlesEmptyBuffer) {
-    // Arrange
-    auto processor = createTestProcessor();
-    auto emptyBuffer = AudioBuffer(2, 0);
-    
-    // Act & Assert
-    EXPECT_NO_THROW(processor->process(emptyBuffer));
-}
+```pseudocode
+test NoiseReductionProcessor:
+    describe "process()":
+        it "reduces noise by at least 20dB":
+            // Arrange
+            processor = new NoiseReductionProcessor(0.85)
+            sineWave = generateSineWave(1000, 48000, 1.0)
+            noise = generateWhiteNoise(48000, 0.5)
+            noisySignal = mix(sineWave, noise)
+            
+            // Act
+            processed = processor.process(noisySignal)
+            
+            // Assert
+            inputSNR = calculateSNR(sineWave, noise)
+            outputSNR = calculateSNR(sineWave, processed - sineWave)
+            expect(outputSNR - inputSNR).toBeGreaterThan(20)
+            
+        it "maintains voice quality (PESQ > 3.0)":
+            // Arrange
+            processor = new NoiseReductionProcessor(0.85)
+            speechSample = loadTestSpeech("test_speech.wav")
+            noisySpeech = addNoise(speechSample, -10) // -10dB SNR
+            
+            // Act
+            processed = processor.process(noisySpeech)
+            
+            // Assert
+            pesqScore = calculatePESQ(speechSample, processed)
+            expect(pesqScore).toBeGreaterThan(3.0)
+            
+        it "processes within latency requirement":
+            // Arrange
+            processor = new NoiseReductionProcessor(0.85)
+            buffer = createBuffer(256, 48000) // 5.3ms of audio
+            
+            // Act
+            startTime = getHighResolutionTime()
+            processor.process(buffer)
+            elapsedTime = getHighResolutionTime() - startTime
+            
+            // Assert
+            expect(elapsedTime).toBeLessThan(30) // <30ms
 ```
+
+### 4.2 Audio Device Manager Tests
+
+```pseudocode
+test AudioDeviceManager:
+    describe "device enumeration":
+        it "lists all available input devices":
+            // Arrange
+            mockAPI = createMockAudioAPI()
+            mockAPI.addDevice("Device1", "Microphone 1")
+            mockAPI.addDevice("Device2", "USB Microphone")
+            manager = new AudioDeviceManager(mockAPI)
+            
+            // Act
+            devices = manager.getInputDevices()
+            
+            // Assert
+            expect(devices.length).toBe(2)
+            expect(devices[0].name).toBe("Microphone 1")
+            expect(devices[1].name).toBe("USB Microphone")
+            
+        it "handles device hot-plug events":
+            // Arrange
+            mockAPI = createMockAudioAPI()
+            manager = new AudioDeviceManager(mockAPI)
+            listener = createMockEventListener()
+            manager.addEventListener(listener)
+            
+            // Act
+            mockAPI.simulateDeviceConnected("NewDevice", "Headset")
+            
+            // Assert
+            expect(listener.onDeviceAdded).toHaveBeenCalledWith({
+                id: "NewDevice",
+                name: "Headset"
+            })
+            
+        it "falls back to default on device disconnect":
+            // Arrange
+            manager = new AudioDeviceManager()
+            manager.selectDevice("CustomDevice")
+            
+            // Act
+            manager.handleDeviceDisconnected("CustomDevice")
+            
+            // Assert
+            expect(manager.currentDevice.id).toBe(getDefaultDeviceId())
+```
+
+### 4.3 Lock-Free Data Structure Tests
+
+```pseudocode
+test LockFreeRingBuffer:
+    describe "concurrent operations":
+        it "handles producer-consumer without data loss":
+            // Arrange
+            buffer = new LockFreeRingBuffer(8192)
+            testData = generateRandomData(1000000)
+            receivedData = []
+            
+            // Act - concurrent threads
+            producerThread = async () => {
+                for chunk in testData.chunks(256):
+                    while !buffer.tryWrite(chunk):
+                        yieldThread()
+            }
+            
+            consumerThread = async () => {
+                while receivedData.length < testData.length:
+                    chunk = buffer.tryRead(256)
+                    if chunk:
+                        receivedData.append(chunk)
+                    else:
+                        yieldThread()
+            }
+            
+            // Run concurrently
+            await Promise.all([producerThread(), consumerThread()])
+            
+            // Assert
+            expect(receivedData).toEqual(testData)
+            
+        it "maintains memory ordering guarantees":
+            // Test atomic operations and memory barriers
+            buffer = new LockFreeRingBuffer(1024)
+            
+            // Write with release semantics
+            testValue = 0xDEADBEEF
+            buffer.writeAtomic(testValue)
+            
+            // Read with acquire semantics
+            readValue = buffer.readAtomic()
+            
+            expect(readValue).toBe(testValue)
+            expect(buffer.hasDataRace()).toBe(false)
+```
+
+## 5. Integration Test Strategy
+
+### 5.1 Audio Pipeline Integration Tests
+
+```pseudocode
+test AudioPipeline:
+    describe "end-to-end processing":
+        it "routes audio through complete pipeline":
+            // Arrange
+            app = createTestApplication()
+            inputDevice = createMockInputDevice()
+            virtualDevice = createMockVirtualDevice()
+            
+            testSignal = generateTestAudioStream(duration: 1.0)
+            inputDevice.queueAudio(testSignal)
+            
+            // Act
+            app.selectInputDevice(inputDevice)
+            app.enableNoiseReduction(true)
+            app.startProcessing()
+            
+            waitForProcessing(1.0)
+            
+            // Assert
+            outputAudio = virtualDevice.getCapturedAudio()
+            expect(outputAudio.duration).toBe(testSignal.duration)
+            expect(calculateNoiseLevel(outputAudio))
+                .toBeLessThan(calculateNoiseLevel(testSignal) * 0.1)
+                
+        it "maintains audio synchronization":
+            // Arrange
+            pipeline = createAudioPipeline()
+            
+            // Create test signal with timing markers
+            markerSignal = generateTimingMarkers(interval: 0.1, duration: 5.0)
+            
+            // Act
+            processedSignal = pipeline.process(markerSignal)
+            
+            // Assert
+            inputMarkers = detectMarkers(markerSignal)
+            outputMarkers = detectMarkers(processedSignal)
+            
+            for i in range(inputMarkers.length):
+                timingDrift = outputMarkers[i].time - inputMarkers[i].time
+                expect(abs(timingDrift)).toBeLessThan(0.001) // <1ms drift
+```
+
+### 5.2 Platform Integration Tests
+
+```pseudocode
+test WindowsPlatform:
+    describe "VB-Cable integration":
+        it "detects VB-Cable virtual device":
+            // Skip if not on Windows
+            if platform != "Windows":
+                skip("Windows only test")
+                
+            // Arrange
+            router = new VirtualDeviceRouter()
+            
+            // Act
+            devices = router.detectVirtualDevices()
+            
+            // Assert
+            vbCable = devices.find(d => d.name.contains("CABLE Input"))
+            expect(vbCable).toBeDefined()
+            expect(vbCable.type).toBe("VirtualAudioCable")
+            
+        it "routes audio to VB-Cable":
+            if !VBCableDriver.isInstalled():
+                skip("VB-Cable not installed")
+                
+            // Arrange
+            router = new VirtualDeviceRouter()
+            testAudio = generateTestTone(1000, 1.0) // 1kHz for 1 second
+            
+            // Act
+            router.initialize("CABLE Input")
+            router.sendAudio(testAudio)
+            
+            // Assert - verify through loopback
+            captured = VBCableDriver.captureOutput(1.0)
+            correlation = crossCorrelate(testAudio, captured)
+            expect(correlation).toBeGreaterThan(0.95)
+
+test MacOSPlatform:
+    describe "BlackHole integration":
+        it "detects BlackHole virtual device":
+            if platform != "macOS":
+                skip("macOS only test")
+                
+            // Arrange
+            router = new VirtualDeviceRouter()
+            
+            // Act
+            devices = router.detectVirtualDevices()
+            
+            // Assert
+            blackHole = devices.find(d => d.name.contains("BlackHole"))
+            expect(blackHole).toBeDefined()
+            expect(blackHole.channels).toBeGreaterThanOrEqual(2)
+```
+
+## 6. Performance Test Strategy
+
+### 6.1 Latency Performance Tests
+
+```pseudocode
+test LatencyPerformance:
+    describe "processing latency":
+        it "meets 30ms latency requirement at p99":
+            // Arrange
+            processor = new NoiseReductionProcessor()
+            bufferSizes = [64, 128, 256, 512]
+            latencies = []
+            
+            // Warm up
+            for i in range(100):
+                buffer = generateRandomAudio(256)
+                processor.process(buffer)
+                
+            // Act - measure 10000 iterations
+            for size in bufferSizes:
+                for i in range(2500):
+                    buffer = generateRandomAudio(size)
+                    
+                    startTime = getCPUCycles()
+                    processor.process(buffer)
+                    elapsedCycles = getCPUCycles() - startTime
+                    
+                    elapsedMs = cyclesToMs(elapsedCycles)
+                    latencies.append(elapsedMs)
+                    
+            // Assert
+            stats = calculateStatistics(latencies)
+            expect(stats.p50).toBeLessThan(10)  // 50th percentile < 10ms
+            expect(stats.p95).toBeLessThan(20)  // 95th percentile < 20ms
+            expect(stats.p99).toBeLessThan(30)  // 99th percentile < 30ms
+            expect(stats.max).toBeLessThan(50)  // No outliers > 50ms
+```
+
+### 6.2 CPU Usage Tests
+
+```pseudocode
+test CPUPerformance:
+    describe "CPU utilization":
+        it "uses less than 10% CPU during normal operation":
+            // Arrange
+            app = createApplication()
+            cpuMonitor = new CPUMonitor()
+            
+            // Act
+            app.startProcessing()
+            cpuMonitor.startMonitoring()
+            
+            // Simulate 60 seconds of audio processing
+            simulateAudioStream(duration: 60.0, sampleRate: 48000)
+            
+            cpuStats = cpuMonitor.stopMonitoring()
+            
+            // Assert
+            expect(cpuStats.average).toBeLessThan(10.0)
+            expect(cpuStats.peak).toBeLessThan(15.0)
+            expect(cpuStats.coreUtilization).toBeBalanced() // Not all on one core
+```
+
+### 6.3 Memory Performance Tests
 
 ### 3.2 Device Management Tests
 

@@ -1,8 +1,73 @@
-# Algorithm Design - QUIET Application
+# QUIET - Algorithm Design Document
 
-## 1. Core Algorithms
+## 1. Overview
 
-### 1.1 Lock-Free Ring Buffer Algorithm
+This document details the core algorithms used in QUIET for real-time noise cancellation. Each algorithm is designed for optimal performance, minimal latency, and lock-free operation where required.
+
+## 2. Core Audio Processing Algorithms
+
+### 2.1 Real-Time Audio Pipeline Algorithm
+
+```pseudocode
+algorithm RealtimeAudioPipeline:
+    // Main audio processing pipeline with lock-free communication
+    
+    constants:
+        BUFFER_SIZE = 256       // ~5.3ms at 48kHz
+        PROCESS_PRIORITY = 95   // Near real-time priority
+        
+    state:
+        inputBuffer: LockFreeRingBuffer
+        outputBuffer: LockFreeRingBuffer
+        processingEnabled: atomic<bool>
+        dropoutCount: atomic<int>
+        
+    function processAudioCallback(input: float*, output: float*, frameCount: int):
+        // This runs in the audio thread - must be lock-free
+        startTime = getHighResolutionTime()
+        
+        // Try to write input to ring buffer
+        if !inputBuffer.tryWrite(input, frameCount):
+            dropoutCount.increment()
+            // Continue processing even if we drop input
+            
+        // Process if we have enough data
+        if outputBuffer.availableFrames() >= frameCount:
+            outputBuffer.read(output, frameCount)
+        else:
+            // Output silence to prevent glitches
+            fillWithSilence(output, frameCount)
+            dropoutCount.increment()
+            
+        // Measure processing time
+        elapsedTime = getHighResolutionTime() - startTime
+        if elapsedTime > BUFFER_SIZE / 48000.0:
+            // Log performance warning (lock-free)
+            performanceWarnings.increment()
+            
+    function processingThread():
+        // Separate thread for heavy processing
+        setThreadPriority(PROCESS_PRIORITY)
+        
+        while processingEnabled.load():
+            if inputBuffer.availableFrames() >= BUFFER_SIZE:
+                // Read input data
+                tempBuffer = allocaAudioBuffer(BUFFER_SIZE)
+                inputBuffer.read(tempBuffer, BUFFER_SIZE)
+                
+                // Apply noise reduction
+                processedBuffer = noiseProcessor.process(tempBuffer)
+                
+                // Write to output buffer
+                if !outputBuffer.tryWrite(processedBuffer, BUFFER_SIZE):
+                    // Output buffer full - skip this block
+                    outputOverruns.increment()
+            else:
+                // No data available - yield CPU
+                yieldThread()
+```
+
+### 2.2 Lock-Free Ring Buffer Algorithm
 
 ```pseudocode
 ALGORITHM LockFreeRingBuffer:
@@ -60,7 +125,77 @@ ALGORITHM LockFreeRingBuffer:
         RETURN true
 ```
 
-### 1.2 RNNoise Integration Algorithm
+### 2.3 RNNoise Integration Algorithm
+
+```pseudocode
+algorithm RNNoiseProcessor:
+    // Integrates RNNoise with proper buffering and resampling
+    
+    constants:
+        RNNOISE_SAMPLE_RATE = 48000
+        RNNOISE_FRAME_SIZE = 480    // 10ms frames
+        RNNOISE_CHANNELS = 1        // Mono processing
+        
+    state:
+        denoiser: RNNoiseState*
+        inputResampler: Resampler
+        outputResampler: Resampler
+        frameBuffer: float[RNNOISE_FRAME_SIZE]
+        residualBuffer: CircularBuffer
+        
+    function initialize(inputSampleRate: int):
+        denoiser = rnnoise_create()
+        
+        if inputSampleRate != RNNOISE_SAMPLE_RATE:
+            inputResampler = Resampler(inputSampleRate, RNNOISE_SAMPLE_RATE)
+            outputResampler = Resampler(RNNOISE_SAMPLE_RATE, inputSampleRate)
+            
+        residualBuffer = CircularBuffer(RNNOISE_FRAME_SIZE * 2)
+        
+    function process(input: AudioBuffer) -> AudioBuffer:
+        // Handle resampling if needed
+        workBuffer = input
+        if inputResampler != null:
+            workBuffer = inputResampler.process(input)
+            
+        // Add to residual buffer
+        residualBuffer.write(workBuffer.data, workBuffer.frameCount)
+        
+        // Process all complete frames
+        outputBuffer = AudioBuffer(input.frameCount)
+        outputIndex = 0
+        
+        while residualBuffer.available() >= RNNOISE_FRAME_SIZE:
+            // Extract one frame
+            residualBuffer.read(frameBuffer, RNNOISE_FRAME_SIZE)
+            
+            // Convert to float and normalize
+            floatFrame = new float[RNNOISE_FRAME_SIZE]
+            for i = 0 to RNNOISE_FRAME_SIZE:
+                floatFrame[i] = frameBuffer[i] / 32768.0
+                
+            // Apply RNNoise
+            rnnoise_process_frame(denoiser, floatFrame, floatFrame)
+            
+            // Convert back to samples
+            for i = 0 to RNNOISE_FRAME_SIZE:
+                frameBuffer[i] = clamp(floatFrame[i] * 32768.0, -32768, 32767)
+                
+            // Add to output
+            copyToOutput(frameBuffer, outputBuffer, outputIndex)
+            outputIndex += RNNOISE_FRAME_SIZE
+            
+        // Resample back if needed
+        if outputResampler != null:
+            outputBuffer = outputResampler.process(outputBuffer)
+            
+        return outputBuffer
+        
+    function reset():
+        rnnoise_destroy(denoiser)
+        denoiser = rnnoise_create()
+        residualBuffer.clear()
+```
 
 ```pseudocode
 ALGORITHM NoiseReductionProcessor:
@@ -130,7 +265,80 @@ ALGORITHM NoiseReductionProcessor:
             output = workingBuffer
 ```
 
-### 1.3 Adaptive Quality Algorithm
+### 2.4 Waveform Visualization Algorithm
+
+```pseudocode
+algorithm WaveformVisualizer:
+    // Efficient waveform display with peak detection
+    
+    constants:
+        DISPLAY_WIDTH = 800         // Pixels
+        DISPLAY_TIME_WINDOW = 2.0   // Seconds
+        UPDATE_RATE = 60            // FPS
+        
+    state:
+        sampleBuffer: CircularBuffer
+        peakBuffer: float[DISPLAY_WIDTH * 2]  // Min/max for each pixel
+        displayMutex: Mutex
+        lastUpdateTime: timestamp
+        
+    function pushAudioData(audio: AudioBuffer):
+        // Add new audio data (called from audio thread)
+        sampleBuffer.writeNonBlocking(audio.data, audio.frameCount)
+        
+    function updateDisplay():
+        // Called from UI thread at UPDATE_RATE
+        currentTime = getCurrentTime()
+        if currentTime - lastUpdateTime < 1.0 / UPDATE_RATE:
+            return  // Rate limit updates
+            
+        samplesPerPixel = (sampleRate * DISPLAY_TIME_WINDOW) / DISPLAY_WIDTH
+        
+        displayMutex.lock()
+        
+        for pixel = 0 to DISPLAY_WIDTH:
+            sampleStart = pixel * samplesPerPixel
+            sampleEnd = (pixel + 1) * samplesPerPixel
+            
+            // Find min/max in this pixel's sample range
+            minValue = +1.0
+            maxValue = -1.0
+            
+            for s = sampleStart to sampleEnd:
+                sample = sampleBuffer.getSample(s)
+                minValue = min(minValue, sample)
+                maxValue = max(maxValue, sample)
+                
+            peakBuffer[pixel * 2] = minValue
+            peakBuffer[pixel * 2 + 1] = maxValue
+            
+        displayMutex.unlock()
+        lastUpdateTime = currentTime
+        invalidateDisplay()
+        
+    function render(graphics: Graphics):
+        displayMutex.lock()
+        
+        centerY = displayHeight / 2
+        
+        // Draw waveform using peak data
+        graphics.beginPath()
+        for pixel = 0 to DISPLAY_WIDTH:
+            minY = centerY + peakBuffer[pixel * 2] * centerY
+            maxY = centerY + peakBuffer[pixel * 2 + 1] * centerY
+            
+            if pixel == 0:
+                graphics.moveTo(pixel, centerY)
+                
+            graphics.lineTo(pixel, minY)
+            graphics.lineTo(pixel, maxY)
+            
+        graphics.stroke()
+        
+        displayMutex.unlock()
+```
+
+### 2.5 Spectrum Analyzer FFT Algorithm
 
 ```pseudocode
 ALGORITHM AdaptiveQualityController:

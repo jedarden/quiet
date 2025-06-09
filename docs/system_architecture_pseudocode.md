@@ -1,110 +1,254 @@
-# System Architecture Pseudocode - QUIET Application
+# QUIET - System Architecture Pseudocode
 
-## 1. System Architecture Overview
+## 1. High-Level Architecture Overview
 
-### 1.1 Component Hierarchy
 ```
-Application
-├── AudioEngine
-│   ├── AudioDeviceManager
-│   ├── AudioProcessor
-│   │   ├── NoiseReductionProcessor
-│   │   └── AudioBufferManager
-│   └── VirtualDeviceRouter
-├── UserInterface
-│   ├── MainWindow
-│   ├── SystemTrayController
-│   └── Visualizations
-│       ├── WaveformDisplay
-│       └── SpectrumAnalyzer
-├── ConfigurationManager
-└── EventDispatcher
-```
-
-### 1.2 Data Flow Architecture
-```
-FUNCTION main_audio_pipeline():
-    INPUT: microphone_audio_stream
-    OUTPUT: denoised_audio_to_virtual_device
-    
-    WHILE application_running:
-        audio_buffer = AudioDeviceManager.read_input_buffer()
-        
-        // Send to input visualization
-        EventDispatcher.dispatch(AudioEvent.INPUT_BUFFER_READY, audio_buffer)
-        
-        IF noise_reduction_enabled:
-            processed_buffer = NoiseReductionProcessor.process(audio_buffer)
-        ELSE:
-            processed_buffer = audio_buffer
-        
-        // Send to output visualization
-        EventDispatcher.dispatch(AudioEvent.OUTPUT_BUFFER_READY, processed_buffer)
-        
-        // Route to virtual device
-        VirtualDeviceRouter.write_buffer(processed_buffer)
-    END WHILE
-END FUNCTION
+┌─────────────────────────────────────────────────────────────────┐
+│                        QUIET Application                         │
+├─────────────────────────────────────────────────────────────────┤
+│                          UI Layer                                │
+│  ┌─────────────┐  ┌────────────────┐  ┌─────────────────────┐  │
+│  │ Main Window │  │ System Tray    │  │ Visualizations      │  │
+│  │ Controls    │  │ Integration    │  │ (Waveform/Spectrum) │  │
+│  └─────────────┘  └────────────────┘  └─────────────────────┘  │
+├─────────────────────────────────────────────────────────────────┤
+│                      Core Processing Layer                       │
+│  ┌─────────────┐  ┌────────────────┐  ┌─────────────────────┐  │
+│  │Audio Device │  │Noise Reduction │  │ Virtual Device      │  │
+│  │Manager      │  │Processor       │  │ Router              │  │
+│  └─────────────┘  └────────────────┘  └─────────────────────┘  │
+├─────────────────────────────────────────────────────────────────┤
+│                    Platform Abstraction Layer                    │
+│  ┌─────────────┐  ┌────────────────┐  ┌─────────────────────┐  │
+│  │Windows Audio│  │macOS Audio     │  │ Configuration       │  │
+│  │(WASAPI)     │  │(Core Audio)    │  │ Manager             │  │
+│  └─────────────┘  └────────────────┘  └─────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 ## 2. Core Components Pseudocode
 
-### 2.1 AudioDeviceManager
+### 2.1 Main Application Controller
 
-```
-CLASS AudioDeviceManager:
-    PRIVATE:
-        current_input_device: AudioDevice
-        available_devices: List<AudioDevice>
-        device_callback: Function
-        buffer_size: Integer = 256
-        sample_rate: Integer = 48000
+```pseudocode
+class QuietApplication:
+    // Singleton application controller
     
-    PUBLIC:
-        FUNCTION initialize():
-            available_devices = enumerate_system_audio_devices()
-            IF saved_device_exists():
-                current_input_device = load_saved_device()
-            ELSE:
-                current_input_device = get_default_device()
-            setup_audio_callback()
-        END FUNCTION
+    private:
+        audioDeviceManager: AudioDeviceManager
+        noiseProcessor: NoiseReductionProcessor
+        virtualRouter: VirtualDeviceRouter
+        mainWindow: MainWindow
+        systemTray: SystemTrayController
+        config: ConfigurationManager
+        eventDispatcher: EventDispatcher
         
-        FUNCTION enumerate_system_audio_devices():
-            devices = []
-            FOR EACH device IN system.get_audio_inputs():
-                device_info = {
-                    id: device.unique_id,
-                    name: device.friendly_name,
-                    channels: device.channel_count,
-                    sample_rates: device.supported_rates
-                }
-                devices.append(device_info)
-            END FOR
-            RETURN devices
-        END FUNCTION
+    function initialize():
+        // Initialize configuration
+        config = ConfigurationManager.load()
         
-        FUNCTION select_device(device_id: String):
-            IF device_id IN available_devices:
-                stop_audio_stream()
-                current_input_device = get_device_by_id(device_id)
-                save_device_preference(device_id)
-                start_audio_stream()
-                EventDispatcher.dispatch(AudioEvent.DEVICE_CHANGED)
-            END IF
-        END FUNCTION
+        // Setup event system
+        eventDispatcher = new EventDispatcher()
         
-        FUNCTION audio_callback(input_buffer: AudioBuffer, output_buffer: AudioBuffer):
-            // This runs in real-time audio thread
-            processed_data = AudioProcessor.process_block(input_buffer)
-            copy_to_output(processed_data, output_buffer)
-        END FUNCTION
-END CLASS
+        // Initialize audio subsystem
+        audioDeviceManager = new AudioDeviceManager(eventDispatcher)
+        noiseProcessor = new NoiseReductionProcessor(config.reductionLevel)
+        virtualRouter = new VirtualDeviceRouter()
+        
+        // Initialize UI
+        mainWindow = new MainWindow(eventDispatcher)
+        systemTray = new SystemTrayController(eventDispatcher)
+        
+        // Connect components
+        connectAudioPipeline()
+        setupEventHandlers()
+        
+        // Start processing
+        if config.processingEnabled:
+            startProcessing()
+            
+    function connectAudioPipeline():
+        // Setup audio flow: Input -> Processor -> Virtual Output
+        audioDeviceManager.onAudioData = (buffer) =>
+            processedBuffer = noiseProcessor.process(buffer)
+            virtualRouter.sendToVirtualDevice(processedBuffer)
+            mainWindow.updateVisualizations(buffer, processedBuffer)
+            
+    function setupEventHandlers():
+        eventDispatcher.on(DeviceChanged, handleDeviceChange)
+        eventDispatcher.on(ProcessingToggled, handleProcessingToggle)
+        eventDispatcher.on(ReductionLevelChanged, handleReductionChange)
+        
+    function startProcessing():
+        audioDeviceManager.startCapture(config.selectedDevice)
+        virtualRouter.startRouting()
+        noiseProcessor.setEnabled(true)
+        
+    function stopProcessing():
+        noiseProcessor.setEnabled(false)
+        audioDeviceManager.stopCapture()
+        virtualRouter.stopRouting()
 ```
 
-### 2.2 NoiseReductionProcessor
+### 2.2 Audio Device Manager
 
-### 2.3 VirtualDeviceRouter
+```pseudocode
+class AudioDeviceManager:
+    // Manages audio input devices and capture
+    
+    private:
+        devices: List<AudioDevice>
+        currentDevice: AudioDevice
+        audioCallback: Function
+        captureThread: Thread
+        isCapturing: boolean
+        bufferQueue: LockFreeQueue<AudioBuffer>
+        
+    function initialize(eventDispatcher):
+        this.eventDispatcher = eventDispatcher
+        enumerateDevices()
+        setupHotplugDetection()
+        
+    function enumerateDevices():
+        // Platform-specific device enumeration
+        if PLATFORM == Windows:
+            devices = WindowsAudioAPI.getInputDevices()
+        else if PLATFORM == macOS:
+            devices = CoreAudioAPI.getInputDevices()
+            
+        // Filter out virtual devices to avoid feedback
+        devices = devices.filter(d => !d.isVirtual)
+        
+    function selectDevice(deviceId: string):
+        device = devices.find(d => d.id == deviceId)
+        if device == null:
+            throw DeviceNotFoundException(deviceId)
+            
+        if isCapturing:
+            stopCapture()
+            
+        currentDevice = device
+        
+        if wasCapturing:
+            startCapture(device)
+            
+    function startCapture(device: AudioDevice):
+        // Configure audio format
+        format = AudioFormat {
+            sampleRate: 48000,  // Required for RNNoise
+            channels: 1,        // Mono for processing
+            bitDepth: 16,       // 16-bit PCM
+            bufferSize: 256     // ~5.3ms at 48kHz
+        }
+        
+        // Start capture thread
+        isCapturing = true
+        captureThread = new Thread(captureLoop, device, format)
+        captureThread.setPriority(REALTIME_PRIORITY)
+        captureThread.start()
+        
+    function captureLoop(device: AudioDevice, format: AudioFormat):
+        // Real-time audio capture loop
+        audioInterface = createAudioInterface(device, format)
+        
+        while isCapturing:
+            buffer = audioInterface.readBuffer()
+            
+            if buffer.isValid():
+                // Process in callback (lock-free)
+                if audioCallback != null:
+                    audioCallback(buffer)
+                    
+                // Also queue for visualization (non-blocking)
+                bufferQueue.tryPush(buffer)
+            else:
+                handleBufferError(buffer.error)
+                
+    function handleDeviceHotplug(event: DeviceEvent):
+        oldDevices = devices
+        enumerateDevices()
+        
+        if event.type == DeviceDisconnected:
+            if currentDevice.id == event.deviceId:
+                // Fall back to default device
+                defaultDevice = getDefaultDevice()
+                selectDevice(defaultDevice.id)
+                eventDispatcher.emit(DeviceDisconnected, event)
+                
+        eventDispatcher.emit(DeviceListChanged, devices)
+```
+
+### 2.3 Noise Reduction Processor
+
+```pseudocode
+class NoiseReductionProcessor:
+    // Wraps RNNoise algorithm with audio processing pipeline
+    
+    private:
+        rnnoiseState: RNNoiseState
+        reductionLevel: float  // 0.0 to 1.0
+        enabled: boolean
+        inputResampler: Resampler
+        outputResampler: Resampler
+        processingBuffer: float[480]  // RNNoise frame size
+        
+    function initialize(level: float):
+        // Initialize RNNoise
+        rnnoiseState = rnnoise_create()
+        reductionLevel = level
+        enabled = false
+        
+        // Setup resamplers for format conversion
+        inputResampler = new Resampler(ANY_RATE, 48000)
+        outputResampler = new Resampler(48000, ANY_RATE)
+        
+    function process(inputBuffer: AudioBuffer) -> AudioBuffer:
+        if !enabled:
+            return inputBuffer  // Passthrough
+            
+        // Convert to 48kHz mono if needed
+        monoBuffer = convertToMono(inputBuffer)
+        resampledBuffer = inputResampler.process(monoBuffer)
+        
+        // Process in RNNoise frame sizes (480 samples = 10ms)
+        outputBuffer = new AudioBuffer(resampledBuffer.size)
+        
+        for i = 0; i < resampledBuffer.size; i += 480:
+            // Extract frame
+            frame = resampledBuffer.getFrame(i, 480)
+            
+            // Apply RNNoise
+            rnnoise_process_frame(rnnoiseState, processingBuffer, frame)
+            
+            // Apply reduction level scaling
+            for j = 0; j < 480; j++:
+                scaledSample = frame[j] * (1 - reductionLevel) + 
+                              processingBuffer[j] * reductionLevel
+                outputBuffer[i + j] = scaledSample
+                
+        // Resample back to original rate if needed
+        if inputBuffer.sampleRate != 48000:
+            outputBuffer = outputResampler.process(outputBuffer)
+            
+        // Convert back to original channel count
+        if inputBuffer.channels > 1:
+            outputBuffer = duplicateToChannels(outputBuffer, inputBuffer.channels)
+            
+        return outputBuffer
+        
+    function setReductionLevel(level: float):
+        reductionLevel = clamp(level, 0.0, 1.0)
+        
+    function getNoiseReductionDB() -> float:
+        // Estimate noise reduction in dB
+        if !enabled:
+            return 0.0
+            
+        // RNNoise typically achieves 20-30dB reduction
+        return reductionLevel * 25.0  // Approximate
+```
+
+### 2.4 Virtual Device Router
 
 ```
 CLASS VirtualDeviceRouter:
