@@ -1,12 +1,48 @@
-cmake_minimum_required(VERSION 3.15)
-project(Quiet VERSION 1.0.0)
+cmake_minimum_required(VERSION 3.20)
+project(Quiet VERSION 1.0.0 LANGUAGES CXX C)
 
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Add JUCE
-add_subdirectory(JUCE)
+# Build options
+option(BUILD_TESTS "Build unit tests" ON)
+option(BUILD_BENCHMARKS "Build performance benchmarks" OFF)
+option(ENABLE_ASAN "Enable Address Sanitizer" OFF)
+option(ENABLE_TRACY "Enable Tracy Profiler" OFF)
+
+# Include custom modules
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+
+# Dependencies
+include(FetchContent)
+set(FETCHCONTENT_QUIET OFF)
+
+# JUCE Framework
+FetchContent_Declare(
+    JUCE
+    GIT_REPOSITORY https://github.com/juce-framework/JUCE.git
+    GIT_TAG 8.0.0
+    GIT_SHALLOW TRUE
+)
+
+# Google Test for testing
+if(BUILD_TESTS)
+    FetchContent_Declare(
+        googletest
+        GIT_REPOSITORY https://github.com/google/googletest.git
+        GIT_TAG v1.14.0
+        GIT_SHALLOW TRUE
+    )
+    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+endif()
+
+FetchContent_MakeAvailable(JUCE)
+if(BUILD_TESTS)
+    FetchContent_MakeAvailable(googletest)
+    enable_testing()
+endif()
 
 # Find packages
 find_package(Threads REQUIRED)
@@ -29,16 +65,21 @@ target_sources(Quiet PRIVATE
     src/main.cpp
     
     # Core
-    src/core/AudioProcessor.cpp
+    src/core/AudioBuffer.cpp
     src/core/AudioDeviceManager.cpp
+    src/core/ConfigurationManager.cpp
+    src/core/EventDispatcher.cpp
     src/core/NoiseReductionProcessor.cpp
-    src/core/VirtualDevice.cpp
+    src/core/VirtualDeviceRouter.cpp
     
     # UI Components
     src/ui/MainWindow.cpp
-    src/ui/SystemTray.cpp
+    SystemTrayController.cpp
     src/ui/WaveformDisplay.cpp
     src/ui/SpectrumAnalyzer.cpp
+    
+    # Utils
+    src/utils/Logger.cpp
     
     # Platform specific
     $<$<PLATFORM_ID:Windows>:src/platform/windows/WASAPIDevice.cpp>
@@ -201,5 +242,9 @@ install(TARGETS Quiet
 )
 
 # Testing
-enable_testing()
-add_subdirectory(tests)
+if(BUILD_TESTS)
+    add_subdirectory(tests)
+endif()
+
+# Include RNNoise
+include(cmake/RNNoise.cmake)
