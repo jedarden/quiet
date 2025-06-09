@@ -1,181 +1,221 @@
+/*
+  ==============================================================================
+
+    MainWindow.h
+    Created: 2025
+    Author:  QUIET Application
+
+    Main application window header using JUCE framework.
+    Defines the primary user interface for noise cancellation control.
+
+  ==============================================================================
+*/
+
 #pragma once
 
-#include <juce_gui_basics/juce_gui_basics.h>
-#include <juce_gui_extra/juce_gui_extra.h>
+#include <JuceHeader.h>
 #include <memory>
-#include "../core/EventDispatcher.h"
-#include "../core/AudioDeviceManager.h"
-#include "../core/NoiseReductionProcessor.h"
+#include "../interfaces/IAudioEventListener.h"
 
-namespace quiet {
-namespace ui {
+// Forward declarations
+class AudioDeviceManager;
+class ConfigurationManager;
+class EventDispatcher;
 
-class WaveformDisplay;
-class SpectrumAnalyzer;
-class DeviceSelector;
-class ControlPanel;
-
+//==============================================================================
 /**
- * @brief Main application window
- * 
- * The primary user interface for the QUIET application, providing:
- * - Device selection and configuration
- * - Noise reduction controls
- * - Real-time audio visualization
- * - System status and performance monitoring
- */
+    Main application window class.
+    
+    Provides the complete user interface for the QUIET noise cancellation app,
+    including audio device selection, noise reduction controls, visualizations,
+    and system tray integration.
+*/
 class MainWindow : public juce::DocumentWindow,
-                   private juce::Timer {
+                   public IAudioEventListener,
+                   private juce::KeyListener
+{
 public:
-    MainWindow(const juce::String& name,
-               core::EventDispatcher& eventDispatcher,
-               core::AudioDeviceManager& audioManager,
-               core::NoiseReductionProcessor& processor);
+    //==============================================================================
+    /** Constructor */
+    MainWindow(juce::String name, AudioDeviceManager& audioDeviceManager,
+               ConfigurationManager& configManager, EventDispatcher& eventDispatcher);
     
+    /** Destructor */
     ~MainWindow() override;
-
-    // DocumentWindow overrides
+    
+    //==============================================================================
+    /** Factory method to create the main window */
+    static std::unique_ptr<MainWindow> create(AudioDeviceManager& audioDeviceManager,
+                                              ConfigurationManager& configManager,
+                                              EventDispatcher& eventDispatcher);
+    
+    //==============================================================================
+    /** DocumentWindow overrides */
     void closeButtonPressed() override;
-    void moved() override;
-    void resized() override;
-
-    // Window management
-    void showWindow();
-    void hideWindow();
-    void minimizeToTray();
-    void restoreFromTray();
     
-    // Configuration
-    void saveWindowState();
+    /** KeyListener overrides */
+    bool keyPressed(const juce::KeyPress& key, juce::Component* originatingComponent) override;
+    
+    /** IAudioEventListener implementation */
+    void onAudioEvent(AudioEvent event, const EventData& data) override;
+    
+    //==============================================================================
+    /** Window state management */
     void restoreWindowState();
-
+    void saveWindowState();
+    
+    //==============================================================================
+    /** Get the audio device manager reference */
+    AudioDeviceManager& getAudioDeviceManager() { return audioDeviceManager; }
+    
+    /** Get the configuration manager reference */
+    ConfigurationManager& getConfigurationManager() { return configManager; }
+    
+    /** Get the event dispatcher reference */
+    EventDispatcher& getEventDispatcher() { return eventDispatcher; }
+    
 private:
-    // Timer callback for UI updates
-    void timerCallback() override;
+    //==============================================================================
+    /** Internal component class that contains all UI elements */
+    class MainContentComponent;
     
-    // Event handling
-    void handleAudioEvent(const core::Event& event);
-    void onDeviceChanged();
-    void onAudioLevelChanged(float level);
-    void onProcessingToggled(bool enabled);
-    void onProcessingStatsUpdated(float cpuUsage, float latency, float reduction);
+    //==============================================================================
+    /** References to core system components */
+    AudioDeviceManager& audioDeviceManager;
+    ConfigurationManager& configManager;
+    EventDispatcher& eventDispatcher;
     
-    // UI setup
-    void createComponents();
-    void setupLayout();
-    void setupStyling();
-    void setupEventListeners();
+    /** UI components */
+    std::unique_ptr<MainContentComponent> mainComponent;
+    std::unique_ptr<juce::LookAndFeel> lookAndFeel;
+    std::unique_ptr<juce::SystemTrayIconComponent> systemTrayIcon;
     
-    // Component callbacks
-    void onDeviceSelected(const std::string& deviceId);
-    void onNoiseReductionToggled();
-    void onReductionLevelChanged(core::NoiseReductionConfig::Level level);
-    void onSettingsButtonClicked();
-    void onAboutButtonClicked();
+    //==============================================================================
+    /** Initialize system tray functionality */
+    void initializeSystemTray();
     
-    // UI updates
-    void updateDeviceList();
-    void updateProcessingState();
-    void updateAudioVisualization();
-    void updatePerformanceMetrics();
-    
-    // Member variables
-    core::EventDispatcher& m_eventDispatcher;
-    core::AudioDeviceManager& m_audioManager;
-    core::NoiseReductionProcessor& m_processor;
-    
-    core::EventDispatcher::ListenerHandle m_eventHandle;
-    
-    // UI Components
-    std::unique_ptr<DeviceSelector> m_deviceSelector;
-    std::unique_ptr<ControlPanel> m_controlPanel;
-    std::unique_ptr<WaveformDisplay> m_inputWaveform;
-    std::unique_ptr<WaveformDisplay> m_outputWaveform;
-    std::unique_ptr<SpectrumAnalyzer> m_spectrumAnalyzer;
-    
-    // Layout components
-    std::unique_ptr<juce::Component> m_contentComponent;
-    std::unique_ptr<juce::TabbedComponent> m_visualizationTabs;
-    
-    // Status components
-    std::unique_ptr<juce::Label> m_statusLabel;
-    std::unique_ptr<juce::Label> m_cpuLabel;
-    std::unique_ptr<juce::Label> m_latencyLabel;
-    std::unique_ptr<juce::Label> m_reductionLabel;
-    
-    // Window state
-    juce::Rectangle<int> m_savedBounds;
-    bool m_isMinimized{false};
-    bool m_closeToTray{true};
-    
+    //==============================================================================
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(MainWindow)
 };
 
+//==============================================================================
 /**
- * @brief Control panel component
- * 
- * Contains the main controls for noise reduction:
- * - Enable/disable toggle
- * - Reduction level selection
- * - Input level meter
- * - Settings access
- */
-class ControlPanel : public juce::Component {
+    Helper classes for specific UI components
+*/
+
+/** Custom toggle button for modern appearance */
+class ModernToggleButton : public juce::ToggleButton
+{
 public:
-    using ToggleCallback = std::function<void()>;
-    using LevelCallback = std::function<void(core::NoiseReductionConfig::Level)>;
-    using ButtonCallback = std::function<void()>;
-
-    ControlPanel();
-    ~ControlPanel() override;
-
-    // Component overrides
-    void paint(juce::Graphics& g) override;
-    void resized() override;
-
-    // Configuration
-    void setEnabled(bool enabled);
-    void setReductionLevel(core::NoiseReductionConfig::Level level);
-    void setInputLevel(float level);
-    void setProcessingStats(float cpuUsage, float latency, float reduction);
-
-    // Callbacks
-    void setToggleCallback(ToggleCallback callback);
-    void setLevelCallback(LevelCallback callback);
-    void setSettingsCallback(ButtonCallback callback);
-
-private:
-    void setupComponents();
-    void updateToggleButton();
-    void updateLevelMeter();
-    void updateStatsDisplay();
-
-    // Components
-    std::unique_ptr<juce::ToggleButton> m_enableButton;
-    std::unique_ptr<juce::ComboBox> m_levelComboBox;
-    std::unique_ptr<juce::Slider> m_inputLevelMeter;
-    std::unique_ptr<juce::TextButton> m_settingsButton;
+    ModernToggleButton() {}
     
-    // Status labels
-    std::unique_ptr<juce::Label> m_cpuLabel;
-    std::unique_ptr<juce::Label> m_latencyLabel;
-    std::unique_ptr<juce::Label> m_reductionLabel;
-
-    // Callbacks
-    ToggleCallback m_toggleCallback;
-    LevelCallback m_levelCallback;
-    ButtonCallback m_settingsCallback;
-
-    // State
-    bool m_enabled{true};
-    core::NoiseReductionConfig::Level m_level{core::NoiseReductionConfig::Level::Medium};
-    float m_inputLevel{0.0f};
-    float m_cpuUsage{0.0f};
-    float m_latency{0.0f};
-    float m_reductionLevel{0.0f};
-
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ControlPanel)
+    void paintButton(juce::Graphics& g, bool shouldDrawButtonAsHighlighted,
+                     bool shouldDrawButtonAsDown) override;
+    
+private:
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ModernToggleButton)
 };
 
-} // namespace ui
-} // namespace quiet
+/** Animated level meter component */
+class AnimatedLevelMeter : public juce::Component, public juce::Timer
+{
+public:
+    AnimatedLevelMeter();
+    ~AnimatedLevelMeter() override;
+    
+    void paint(juce::Graphics& g) override;
+    void timerCallback() override;
+    
+    void setLevel(float newLevel);
+    void setPeakLevel(float peak);
+    
+private:
+    float currentLevel = 0.0f;
+    float targetLevel = 0.0f;
+    float peakLevel = 0.0f;
+    float peakHoldTime = 0.0f;
+    
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(AnimatedLevelMeter)
+};
+
+/** Tooltip window with custom styling */
+class CustomTooltipWindow : public juce::TooltipWindow
+{
+public:
+    CustomTooltipWindow() : TooltipWindow(nullptr, 700) {}
+    
+    void paint(juce::Graphics& g) override;
+    
+private:
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(CustomTooltipWindow)
+};
+
+//==============================================================================
+/**
+    Keyboard shortcut definitions
+*/
+namespace KeyboardShortcuts
+{
+    const juce::KeyPress toggleNoiseReduction('T', juce::ModifierKeys::commandModifier, 0);
+    const juce::KeyPress showSettings(',', juce::ModifierKeys::commandModifier, 0);
+    const juce::KeyPress minimizeWindow('M', juce::ModifierKeys::commandModifier, 0);
+    const juce::KeyPress quitApplication('Q', juce::ModifierKeys::commandModifier, 0);
+    const juce::KeyPress nextDevice(']', juce::ModifierKeys::commandModifier, 0);
+    const juce::KeyPress previousDevice('[', juce::ModifierKeys::commandModifier, 0);
+    const juce::KeyPress increaseReduction('+', juce::ModifierKeys::commandModifier, 0);
+    const juce::KeyPress decreaseReduction('-', juce::ModifierKeys::commandModifier, 0);
+}
+
+//==============================================================================
+/**
+    Animation helper class for smooth UI transitions
+*/
+class UIAnimator
+{
+public:
+    /** Animate a component property */
+    static void animateComponent(juce::Component* component, 
+                                const juce::Rectangle<int>& finalBounds,
+                                int durationMs = 200);
+    
+    /** Fade in/out a component */
+    static void fadeComponent(juce::Component* component, 
+                             float finalAlpha,
+                             int durationMs = 150);
+    
+    /** Animate color change */
+    static void animateColor(juce::Component* component,
+                            int colorId,
+                            const juce::Colour& finalColor,
+                            int durationMs = 200);
+};
+
+//==============================================================================
+/**
+    Theme colors for the application
+*/
+namespace ThemeColors
+{
+    const juce::Colour background(0xff1e1e1e);
+    const juce::Colour panel(0xff2d2d2d);
+    const juce::Colour border(0xff3d3d3d);
+    const juce::Colour text(0xffe0e0e0);
+    const juce::Colour textDim(0xff808080);
+    const juce::Colour accent(0xff00ff00);
+    const juce::Colour accentDim(0xff00cc00);
+    const juce::Colour warning(0xffffff00);
+    const juce::Colour error(0xffff0000);
+    const juce::Colour success(0xff00ff00);
+    
+    /** Get color with hover state */
+    inline juce::Colour getHoverColor(const juce::Colour& base)
+    {
+        return base.brighter(0.2f);
+    }
+    
+    /** Get color with pressed state */
+    inline juce::Colour getPressedColor(const juce::Colour& base)
+    {
+        return base.darker(0.2f);
+    }
+}

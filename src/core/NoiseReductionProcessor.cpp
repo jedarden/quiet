@@ -3,37 +3,11 @@
 #include <cstring>
 #include <chrono>
 #include <stdexcept>
+#include <cmath>
 
-// Note: In a real implementation, you would include the actual RNNoise headers
-// For this implementation, we'll create a stub that simulates RNNoise behavior
+// Include the actual RNNoise library
 extern "C" {
-    typedef struct DenoiseState DenoiseState;
-    
-    // Stub implementations for RNNoise functions
-    DenoiseState* rnnoise_create(void* model) {
-        (void)model;
-        return reinterpret_cast<DenoiseState*>(malloc(sizeof(int)));  // Dummy allocation
-    }
-    
-    void rnnoise_destroy(DenoiseState* st) {
-        free(st);
-    }
-    
-    float rnnoise_process_frame(DenoiseState* st, float* out, const float* in) {
-        (void)st;
-        // Simple noise reduction simulation: apply low-pass filter and slight attenuation
-        constexpr int FRAME_SIZE = 480;
-        constexpr float ATTENUATION = 0.8f;
-        
-        for (int i = 0; i < FRAME_SIZE; ++i) {
-            // Simple moving average for noise reduction simulation
-            float filtered = in[i] * ATTENUATION;
-            if (i > 0) filtered = (filtered + out[i-1] * 0.1f) / 1.1f;
-            out[i] = filtered;
-        }
-        
-        return 0.7f;  // Simulated voice activity detection probability
-    }
+#include <rnnoise.h>
 }
 
 namespace quiet {
@@ -48,9 +22,11 @@ NoiseReductionProcessor::NoiseReductionProcessor(EventDispatcher& eventDispatche
     m_config.threshold = 0.5f;
     m_config.adaptiveMode = true;
     
-    // Initialize overlap buffer for frame-based processing
-    m_overlapSize = RNNOISE_FRAME_SIZE / 4;  // 25% overlap
-    m_overlapBuffer.resize(m_overlapSize, 0.0f);
+    // Initialize frame buffers for stereo processing
+    m_leftChannelBuffer.resize(RNNOISE_FRAME_SIZE, 0.0f);
+    m_rightChannelBuffer.resize(RNNOISE_FRAME_SIZE, 0.0f);
+    m_inputQueue.reserve(RNNOISE_FRAME_SIZE * 2);
+    m_outputQueue.reserve(RNNOISE_FRAME_SIZE * 2);
 }
 
 NoiseReductionProcessor::~NoiseReductionProcessor() {
@@ -64,6 +40,14 @@ bool NoiseReductionProcessor::initialize(double sampleRate) {
     
     m_sampleRate = sampleRate;
     
+    // Check if sample rate conversion is needed
+    m_needsResampling = (sampleRate != RNNOISE_SAMPLE_RATE);
+    if (m_needsResampling) {
+        // Initialize resampler for RNNoise's expected 48kHz
+        m_resampleRatio = RNNOISE_SAMPLE_RATE / sampleRate;
+        m_resampleBuffer.resize(static_cast<size_t>(RNNOISE_FRAME_SIZE * std::max(1.0, m_resampleRatio) * 2));
+    }
+    
     // Initialize RNNoise
     if (!initializeRNNoise()) {
         return false;
@@ -72,6 +56,8 @@ bool NoiseReductionProcessor::initialize(double sampleRate) {
     // Allocate working buffers
     m_workingBuffer.resize(RNNOISE_FRAME_SIZE);
     m_tempBuffer.resize(RNNOISE_FRAME_SIZE);
+    m_floatToShortBuffer.resize(RNNOISE_FRAME_SIZE);
+    m_shortToFloatBuffer.resize(RNNOISE_FRAME_SIZE);
     
     // Reset statistics
     resetStats();
@@ -257,53 +243,52 @@ bool NoiseReductionProcessor::processMonoBuffer(AudioBuffer& monoBuffer) {
         return false;
     }
     
-    // Process in RNNOISE_FRAME_SIZE chunks with overlap
-    int processedSamples = 0;
+    // Add incoming samples to input queue
+    m_inputQueue.insert(m_inputQueue.end(), data, data + numSamples);
     
-    while (processedSamples < numSamples) {
-        int samplesToProcess = std::min(RNNOISE_FRAME_SIZE, numSamples - processedSamples);
+    int outputIndex = 0;
+    
+    // Process complete frames from the queue
+    while (m_inputQueue.size() >= RNNOISE_FRAME_SIZE) {
+        // Extract a frame from the queue
+        std::copy(m_inputQueue.begin(), m_inputQueue.begin() + RNNOISE_FRAME_SIZE,
+                 m_workingBuffer.begin());
         
-        // Handle partial frames at the end
-        if (samplesToProcess < RNNOISE_FRAME_SIZE) {
-            // Zero-pad the working buffer
-            std::fill(m_workingBuffer.begin(), m_workingBuffer.end(), 0.0f);
-            std::copy(data + processedSamples, data + processedSamples + samplesToProcess,
-                     m_workingBuffer.begin());
+        // Handle sample rate conversion if needed
+        if (m_needsResampling) {
+            resampleFrame(m_workingBuffer.data(), m_tempBuffer.data(), RNNOISE_FRAME_SIZE, true);
+            
+            // Process the resampled frame
+            if (!processFrame(m_tempBuffer.data(), RNNOISE_FRAME_SIZE)) {
+                return false;
+            }
+            
+            // Resample back to original rate
+            resampleFrame(m_tempBuffer.data(), m_workingBuffer.data(), RNNOISE_FRAME_SIZE, false);
         } else {
-            // Copy full frame
-            std::copy(data + processedSamples, data + processedSamples + RNNOISE_FRAME_SIZE,
-                     m_workingBuffer.begin());
-        }
-        
-        // Apply overlap from previous frame
-        if (processedSamples > 0 && m_overlapSize > 0) {
-            for (int i = 0; i < std::min(m_overlapSize, samplesToProcess); ++i) {
-                m_workingBuffer[i] = (m_workingBuffer[i] + m_overlapBuffer[i]) * 0.5f;
+            // Process the frame directly
+            if (!processFrame(m_workingBuffer.data(), RNNOISE_FRAME_SIZE)) {
+                return false;
             }
         }
         
-        // Process the frame
-        if (!processFrame(m_workingBuffer.data(), RNNOISE_FRAME_SIZE)) {
-            return false;
+        // Add processed frame to output queue
+        m_outputQueue.insert(m_outputQueue.end(), m_workingBuffer.begin(), m_workingBuffer.end());
+        
+        // Remove processed samples from input queue
+        m_inputQueue.erase(m_inputQueue.begin(), m_inputQueue.begin() + RNNOISE_FRAME_SIZE);
+    }
+    
+    // Copy available output samples back to the buffer
+    int samplesToOutput = std::min(static_cast<int>(m_outputQueue.size()), numSamples);
+    if (samplesToOutput > 0) {
+        std::copy(m_outputQueue.begin(), m_outputQueue.begin() + samplesToOutput, data);
+        m_outputQueue.erase(m_outputQueue.begin(), m_outputQueue.begin() + samplesToOutput);
+        
+        // Fill any remaining samples with zeros (latency compensation)
+        if (samplesToOutput < numSamples) {
+            std::fill(data + samplesToOutput, data + numSamples, 0.0f);
         }
-        
-        // Store overlap for next frame
-        if (samplesToProcess >= m_overlapSize) {
-            std::copy(m_workingBuffer.end() - m_overlapSize, m_workingBuffer.end(),
-                     m_overlapBuffer.begin());
-        }
-        
-        // Copy processed data back (excluding overlap region)
-        int copyStart = (processedSamples > 0) ? m_overlapSize : 0;
-        int copyCount = std::min(samplesToProcess - copyStart, numSamples - processedSamples - copyStart);
-        
-        if (copyCount > 0) {
-            std::copy(m_workingBuffer.begin() + copyStart,
-                     m_workingBuffer.begin() + copyStart + copyCount,
-                     data + processedSamples + copyStart);
-        }
-        
-        processedSamples += samplesToProcess;
     }
     
     return true;
@@ -314,17 +299,33 @@ bool NoiseReductionProcessor::processFrame(float* frame, int frameSize) {
         return false;
     }
     
-    // Convert to format expected by RNNoise if necessary
-    convertToRNNoiseFormat(frame, m_tempBuffer.data(), frameSize);
+    // Store pre-processed RMS for statistics
+    float preRMS = calculateRMS(frame, frameSize);
+    
+    // Convert float samples to short for RNNoise
+    convertFloatToShort(frame, m_floatToShortBuffer.data(), frameSize);
     
     // Apply RNNoise processing
-    float voiceProb = rnnoise_process_frame(m_rnnoise, m_tempBuffer.data(), m_tempBuffer.data());
+    float voiceProb = rnnoise_process_frame(m_rnnoise, 
+                                           m_floatToShortBuffer.data(), 
+                                           m_floatToShortBuffer.data());
+    
+    // Convert back to float
+    convertShortToFloat(m_floatToShortBuffer.data(), frame, frameSize);
     
     // Apply additional processing based on configuration
-    applyReductionLevel(m_tempBuffer.data(), frameSize, voiceProb);
+    applyReductionLevel(frame, frameSize, voiceProb);
     
-    // Convert back to our format
-    convertFromRNNoiseFormat(m_tempBuffer.data(), frame, frameSize);
+    // Update VAD state
+    updateVADState(voiceProb);
+    
+    // Calculate post-processed RMS for statistics
+    float postRMS = calculateRMS(frame, frameSize);
+    float reductionDb = 20.0f * log10f(std::max(preRMS / std::max(postRMS, 1e-10f), 1e-10f));
+    
+    // Store statistics for this frame
+    m_lastVoiceProb = voiceProb;
+    m_lastReductionDb = reductionDb;
     
     return true;
 }
@@ -396,8 +397,21 @@ void NoiseReductionProcessor::applyReductionLevel(float* frame, int frameSize, f
 
 bool NoiseReductionProcessor::initializeRNNoise() {
     try {
+        // Create RNNoise instances for each channel if processing stereo
         m_rnnoise = rnnoise_create(nullptr);  // Use default model
-        return m_rnnoise != nullptr;
+        if (!m_rnnoise) {
+            return false;
+        }
+        
+        // Create second instance for stereo processing
+        m_rnnoiseRight = rnnoise_create(nullptr);
+        if (!m_rnnoiseRight) {
+            rnnoise_destroy(m_rnnoise);
+            m_rnnoise = nullptr;
+            return false;
+        }
+        
+        return true;
     } catch (...) {
         return false;
     }
@@ -408,31 +422,186 @@ void NoiseReductionProcessor::cleanupRNNoise() {
         rnnoise_destroy(m_rnnoise);
         m_rnnoise = nullptr;
     }
+    if (m_rnnoiseRight) {
+        rnnoise_destroy(m_rnnoiseRight);
+        m_rnnoiseRight = nullptr;
+    }
 }
 
-void NoiseReductionProcessor::convertToRNNoiseFormat(const float* input, float* output, int numSamples) {
-    // RNNoise expects specific format - for now just copy
-    std::memcpy(output, input, numSamples * sizeof(float));
+void NoiseReductionProcessor::convertFloatToShort(const float* input, short* output, int numSamples) {
+    // Convert float [-1.0, 1.0] to short [-32768, 32767]
+    constexpr float SCALE = 32767.0f;
+    
+    for (int i = 0; i < numSamples; ++i) {
+        float sample = input[i] * SCALE;
+        // Clamp to prevent overflow
+        sample = std::max(-32768.0f, std::min(32767.0f, sample));
+        output[i] = static_cast<short>(sample);
+    }
 }
 
-void NoiseReductionProcessor::convertFromRNNoiseFormat(const float* input, float* output, int numSamples) {
-    // Convert back from RNNoise format - for now just copy
-    std::memcpy(output, input, numSamples * sizeof(float));
+void NoiseReductionProcessor::convertShortToFloat(const short* input, float* output, int numSamples) {
+    // Convert short [-32768, 32767] to float [-1.0, 1.0]
+    constexpr float INV_SCALE = 1.0f / 32768.0f;
+    
+    for (int i = 0; i < numSamples; ++i) {
+        output[i] = static_cast<float>(input[i]) * INV_SCALE;
+    }
+}
+
+void NoiseReductionProcessor::resampleFrame(const float* input, float* output, int frameSize, bool upsample) {
+    // Simple linear interpolation resampling
+    if (upsample && m_resampleRatio > 1.0) {
+        // Upsample to 48kHz
+        int outputSize = static_cast<int>(frameSize * m_resampleRatio);
+        for (int i = 0; i < outputSize; ++i) {
+            float srcIndex = i / m_resampleRatio;
+            int srcIdx = static_cast<int>(srcIndex);
+            float frac = srcIndex - srcIdx;
+            
+            if (srcIdx < frameSize - 1) {
+                output[i] = input[srcIdx] * (1.0f - frac) + input[srcIdx + 1] * frac;
+            } else {
+                output[i] = input[frameSize - 1];
+            }
+        }
+    } else if (!upsample && m_resampleRatio > 1.0) {
+        // Downsample from 48kHz
+        for (int i = 0; i < frameSize; ++i) {
+            float srcIndex = i * m_resampleRatio;
+            int srcIdx = static_cast<int>(srcIndex);
+            float frac = srcIndex - srcIdx;
+            
+            int inputSize = static_cast<int>(frameSize * m_resampleRatio);
+            if (srcIdx < inputSize - 1) {
+                output[i] = input[srcIdx] * (1.0f - frac) + input[srcIdx + 1] * frac;
+            } else {
+                output[i] = input[inputSize - 1];
+            }
+        }
+    } else {
+        // No resampling needed
+        std::memcpy(output, input, frameSize * sizeof(float));
+    }
+}
+
+float NoiseReductionProcessor::calculateRMS(const float* samples, int numSamples) {
+    float sum = 0.0f;
+    for (int i = 0; i < numSamples; ++i) {
+        sum += samples[i] * samples[i];
+    }
+    return std::sqrt(sum / numSamples);
+}
+
+void NoiseReductionProcessor::updateVADState(float voiceProb) {
+    // Update VAD history for adaptive mode
+    m_vadHistory.push_back(voiceProb);
+    if (m_vadHistory.size() > VAD_HISTORY_SIZE) {
+        m_vadHistory.erase(m_vadHistory.begin());
+    }
+    
+    // Calculate average VAD probability
+    float avgVAD = 0.0f;
+    for (float prob : m_vadHistory) {
+        avgVAD += prob;
+    }
+    avgVAD /= m_vadHistory.size();
+    
+    // Update voice detected state with hysteresis
+    if (avgVAD > m_config.threshold + 0.1f) {
+        m_voiceDetected = true;
+    } else if (avgVAD < m_config.threshold - 0.1f) {
+        m_voiceDetected = false;
+    }
 }
 
 float NoiseReductionProcessor::calculateReductionAmount(const AudioBuffer& processedBuffer) {
-    // This is a simplified calculation - in practice you'd compare before/after
-    // For now, return a placeholder value based on RMS level
-    float rmsLevel = processedBuffer.getRMSLevel(0, 0, processedBuffer.getNumSamples());
-    
-    // Estimate reduction based on signal level (very rough approximation)
-    if (rmsLevel < 0.01f) {
-        return 20.0f;  // High reduction for very quiet signals
-    } else if (rmsLevel < 0.1f) {
-        return 10.0f;  // Medium reduction
-    } else {
-        return 5.0f;   // Low reduction for loud signals
+    // Return the actual reduction calculated during processing
+    return m_lastReductionDb;
+}
+
+bool NoiseReductionProcessor::processStereoBuffer(AudioBuffer& stereoBuffer) {
+    if (stereoBuffer.getNumChannels() != 2) {
+        return false;
     }
+    
+    const int numSamples = stereoBuffer.getNumSamples();
+    float* leftData = stereoBuffer.getWritePointer(0);
+    float* rightData = stereoBuffer.getWritePointer(1);
+    
+    // Add incoming samples to input queues
+    m_leftInputQueue.insert(m_leftInputQueue.end(), leftData, leftData + numSamples);
+    m_rightInputQueue.insert(m_rightInputQueue.end(), rightData, rightData + numSamples);
+    
+    // Process complete frames from both channels
+    while (m_leftInputQueue.size() >= RNNOISE_FRAME_SIZE && 
+           m_rightInputQueue.size() >= RNNOISE_FRAME_SIZE) {
+        
+        // Extract frames from both channels
+        std::copy(m_leftInputQueue.begin(), m_leftInputQueue.begin() + RNNOISE_FRAME_SIZE,
+                 m_leftChannelBuffer.begin());
+        std::copy(m_rightInputQueue.begin(), m_rightInputQueue.begin() + RNNOISE_FRAME_SIZE,
+                 m_rightChannelBuffer.begin());
+        
+        // Process left channel
+        if (!processFrameStereo(m_leftChannelBuffer.data(), m_rnnoise, RNNOISE_FRAME_SIZE)) {
+            return false;
+        }
+        
+        // Process right channel
+        if (!processFrameStereo(m_rightChannelBuffer.data(), m_rnnoiseRight, RNNOISE_FRAME_SIZE)) {
+            return false;
+        }
+        
+        // Add processed frames to output queues
+        m_leftOutputQueue.insert(m_leftOutputQueue.end(), 
+                                m_leftChannelBuffer.begin(), m_leftChannelBuffer.end());
+        m_rightOutputQueue.insert(m_rightOutputQueue.end(), 
+                                 m_rightChannelBuffer.begin(), m_rightChannelBuffer.end());
+        
+        // Remove processed samples from input queues
+        m_leftInputQueue.erase(m_leftInputQueue.begin(), 
+                              m_leftInputQueue.begin() + RNNOISE_FRAME_SIZE);
+        m_rightInputQueue.erase(m_rightInputQueue.begin(), 
+                               m_rightInputQueue.begin() + RNNOISE_FRAME_SIZE);
+    }
+    
+    // Copy available output samples back to the buffer
+    int samplesToOutput = std::min(static_cast<int>(m_leftOutputQueue.size()), numSamples);
+    if (samplesToOutput > 0) {
+        std::copy(m_leftOutputQueue.begin(), m_leftOutputQueue.begin() + samplesToOutput, leftData);
+        std::copy(m_rightOutputQueue.begin(), m_rightOutputQueue.begin() + samplesToOutput, rightData);
+        
+        m_leftOutputQueue.erase(m_leftOutputQueue.begin(), 
+                               m_leftOutputQueue.begin() + samplesToOutput);
+        m_rightOutputQueue.erase(m_rightOutputQueue.begin(), 
+                                m_rightOutputQueue.begin() + samplesToOutput);
+        
+        // Fill any remaining samples with zeros
+        if (samplesToOutput < numSamples) {
+            std::fill(leftData + samplesToOutput, leftData + numSamples, 0.0f);
+            std::fill(rightData + samplesToOutput, rightData + numSamples, 0.0f);
+        }
+    }
+    
+    return true;
+}
+
+bool NoiseReductionProcessor::processFrameStereo(float* frame, DenoiseState* state, int frameSize) {
+    if (!state || frameSize != RNNOISE_FRAME_SIZE) {
+        return false;
+    }
+    
+    // Convert and process similar to mono, but with specific state
+    std::vector<short> tempShortBuffer(frameSize);
+    convertFloatToShort(frame, tempShortBuffer.data(), frameSize);
+    
+    float voiceProb = rnnoise_process_frame(state, tempShortBuffer.data(), tempShortBuffer.data());
+    
+    convertShortToFloat(tempShortBuffer.data(), frame, frameSize);
+    applyReductionLevel(frame, frameSize, voiceProb);
+    
+    return true;
 }
 
 } // namespace core

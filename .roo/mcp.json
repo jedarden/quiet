@@ -3,7 +3,7 @@
      "perplexityai": {
       "command": "npx",
       "args": [
-        "@modelcontextprotocol/server-sse-client",
+        "@modelcontextprotocol/server-sse",
         "--url", "http://perplexity-service.mcp:8080/sse"
       ],
       "env": {
@@ -13,7 +13,7 @@
     "gpt-4o-search": {
       "command": "npx",
       "args": [
-        "@modelcontextprotocol/server-sse-client",
+        "@modelcontextprotocol/server-sse",
         "--url", "http://gpt-4o-search-mcp-service.mcp:8000/sse"
       ],
       "env": {
@@ -23,7 +23,7 @@
     "crawl4ai": {
       "command": "npx",
       "args": [
-        "@modelcontextprotocol/server-sse-client",
+        "@modelcontextprotocol/server-sse",
         "--url", "http://crawl4ai-service.mcp:11235/mcp/sse"
       ],
       "env": {

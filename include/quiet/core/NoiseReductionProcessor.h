@@ -1,11 +1,16 @@
 #pragma once
 
-#include <rnnoise.h>
 #include <memory>
 #include <atomic>
 #include <vector>
+#include <mutex>
 #include "AudioBuffer.h"
 #include "EventDispatcher.h"
+
+// Forward declaration for RNNoise
+extern "C" {
+    typedef struct DenoiseState DenoiseState;
+}
 
 namespace quiet {
 namespace core {
@@ -80,33 +85,72 @@ public:
 
 private:
     // Internal processing methods
+    bool processMonoBuffer(AudioBuffer& monoBuffer);
+    bool processStereoBuffer(AudioBuffer& stereoBuffer);
     bool processFrame(float* frame, int frameSize);
+    bool processFrameStereo(float* frame, DenoiseState* state, int frameSize);
     void updateStats(float reductionDb, float voiceProb, uint64_t processingTime);
-    void applyReductionLevel(float* frame, int frameSize, float reduction);
+    void applyReductionLevel(float* frame, int frameSize, float voiceProb);
     
     // RNNoise management
     bool initializeRNNoise();
     void cleanupRNNoise();
     
     // Audio format conversion
-    void convertToRNNoiseFormat(const float* input, float* output, int numSamples);
-    void convertFromRNNoiseFormat(const float* input, float* output, int numSamples);
+    void convertFloatToShort(const float* input, short* output, int numSamples);
+    void convertShortToFloat(const short* input, float* output, int numSamples);
+    void resampleFrame(const float* input, float* output, int frameSize, bool upsample);
+    
+    // Helper methods
+    float calculateRMS(const float* samples, int numSamples);
+    float calculateReductionAmount(const AudioBuffer& processedBuffer);
+    void updateVADState(float voiceProb);
     
     // Member variables
     EventDispatcher& m_eventDispatcher;
     
     // RNNoise state
     DenoiseState* m_rnnoise{nullptr};
+    DenoiseState* m_rnnoiseRight{nullptr};  // For stereo processing
     
     // Configuration
     NoiseReductionConfig m_config;
     std::atomic<bool> m_enabled{true};
     double m_sampleRate{48000.0};
     
-    // Processing buffers
+    // Processing constants
     static constexpr int RNNOISE_FRAME_SIZE = 480;  // 10ms at 48kHz
+    static constexpr int RNNOISE_SAMPLE_RATE = 48000;
+    static constexpr int VAD_HISTORY_SIZE = 10;
+    
+    // Processing buffers
     std::vector<float> m_workingBuffer;
     std::vector<float> m_tempBuffer;
+    std::vector<short> m_floatToShortBuffer;
+    std::vector<short> m_shortToFloatBuffer;
+    
+    // Frame buffering for stereo
+    std::vector<float> m_leftChannelBuffer;
+    std::vector<float> m_rightChannelBuffer;
+    
+    // Input/output queues for frame-based processing
+    std::vector<float> m_inputQueue;
+    std::vector<float> m_outputQueue;
+    std::vector<float> m_leftInputQueue;
+    std::vector<float> m_rightInputQueue;
+    std::vector<float> m_leftOutputQueue;
+    std::vector<float> m_rightOutputQueue;
+    
+    // Resampling support
+    bool m_needsResampling{false};
+    double m_resampleRatio{1.0};
+    std::vector<float> m_resampleBuffer;
+    
+    // VAD state
+    std::vector<float> m_vadHistory;
+    bool m_voiceDetected{false};
+    float m_lastVoiceProb{0.0f};
+    float m_lastReductionDb{0.0f};
     
     // Statistics
     mutable std::mutex m_statsMutex;
@@ -116,10 +160,6 @@ private:
     std::atomic<float> m_cpuUsage{0.0f};
     std::atomic<float> m_latency{0.0f};
     uint64_t m_lastProcessingTime{0};
-    
-    // Overlap-add state for frame-based processing
-    std::vector<float> m_overlapBuffer;
-    int m_overlapSize{0};
     
     bool m_isInitialized{false};
 };
