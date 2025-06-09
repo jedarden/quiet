@@ -1,0 +1,7 @@
+QUIET v1.0.0 Windows Executable
+Build Date: 2025-06-09
+Platform: Windows 10/11 x64
+Size: ~15MB (estimated)
+Dependencies: 
+  - Visual C++ Redistributables
+  - VB-Cable (virtual audio driver)

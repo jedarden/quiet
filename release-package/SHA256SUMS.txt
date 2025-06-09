@@ -1,0 +1,8 @@
+# SHA256 Checksums for QUIET v1.0.0
+# Generated: Mon Jun  9 10:22:11 PM UTC 2025
+
+d05669ee0e1f3e0e352ed468009da67cc463af872a47b92d51efb4ebabf120fa  QUIET-1.0.0-windows-installer.tar.gz
+64bc397c33d70ef109d72b206de623595d59c4fe99bf8ebac118b017b7b99232  QUIET-1.0.0-macos-installer.tar.gz
+8274fb150bf369abffed953d8d06d1f74883491e171d8eae0b9fe87a222c2a07  source/quiet-1.0.0-source.tar.gz
+c87944bef809618df6d0acc21934831527a0a2ecea08695c532715781325be28  source/quiet-1.0.0-complete.tar.gz
+0d6772c8e8077827f9d922976f93a92ac8f96ee59067614b083e7f9348cf6988  docs/quiet-1.0.0-docs.tar.gz
