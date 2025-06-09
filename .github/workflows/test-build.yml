@@ -1,0 +1,47 @@
+name: Test Build Locally
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [test-build]
+
+jobs:
+  test-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Test Environment
+        shell: pwsh
+        run: |
+          Write-Host "Testing Windows environment..."
+          Write-Host "Current directory: $PWD"
+          Write-Host "Directory contents:"
+          Get-ChildItem -Recurse -Depth 2
+          
+      - name: Check Build Tools
+        shell: pwsh
+        run: |
+          Write-Host "Checking for build tools..."
+          where.exe cmake || Write-Host "CMake not found"
+          where.exe msbuild || Write-Host "MSBuild not found"
+          where.exe cl || Write-Host "MSVC compiler not found"
+          
+  test-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Test Environment
+        run: |
+          echo "Testing macOS environment..."
+          echo "Current directory: $PWD"
+          echo "Directory contents:"
+          ls -la
+          
+      - name: Check Build Tools
+        run: |
+          echo "Checking for build tools..."
+          which cmake || echo "CMake not found"
+          which clang++ || echo "Clang not found"
+          which brew || echo "Homebrew not found"
