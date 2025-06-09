@@ -11,13 +11,14 @@ QUIET provides real-time noise cancellation for audio input devices, enabling us
 
 ### 2.2 System Scope
 - Desktop application for Windows and macOS
-- Real-time audio processing with ML-based noise reduction
+- Real-time audio processing with ML-based noise reduction using RNNoise algorithm
 - Visual feedback through waveform and spectrum displays
 - Integration with virtual audio devices for application routing
+- System tray integration for background operation
 
 ### 2.3 System Boundaries
-- **In Scope**: Audio input processing, noise reduction, visualization, virtual device routing
-- **Out of Scope**: Audio recording, network streaming, cloud processing, mobile platforms
+- **In Scope**: Audio input processing, noise reduction, visualization, virtual device routing, system tray integration
+- **Out of Scope**: Audio recording, network streaming, cloud processing, mobile platforms, voice enhancement beyond noise removal
 
 ## 3. User Stories and Acceptance Criteria
 

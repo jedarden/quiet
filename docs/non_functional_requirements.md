@@ -1,146 +1,360 @@
-# Non-Functional Requirements - QUIET Application
+# QUIET - Non-Functional Requirements Specification
 
-## 1. Performance Requirements
+## 1. Overview
 
-### 1.1 Latency
-- **NFR-1.1.1**: End-to-end audio processing latency SHALL NOT exceed 30ms
-- **NFR-1.1.2**: Audio buffer size SHALL be configurable between 64-512 samples
-- **NFR-1.1.3**: Virtual audio routing SHALL add less than 5ms additional latency
-- **NFR-1.1.4**: UI updates SHALL NOT impact audio processing performance
+This document specifies the non-functional requirements (NFRs) for QUIET, defining the quality attributes, performance characteristics, and operational constraints that the system must meet. These requirements ensure the application delivers a professional, reliable, and user-friendly experience.
 
-### 1.2 Resource Usage
-- **NFR-1.2.1**: CPU usage SHALL NOT exceed 15% on a quad-core processor
-- **NFR-1.2.2**: Memory usage SHALL NOT exceed 200MB during normal operation
-- **NFR-1.2.3**: The application SHALL NOT require GPU acceleration
-- **NFR-1.2.4**: Disk I/O SHALL be minimal (configuration files only)
+## 2. Performance Requirements
 
-### 1.3 Audio Quality
-- **NFR-1.3.1**: Support sample rates: 16kHz, 44.1kHz, 48kHz
-- **NFR-1.3.2**: Support bit depths: 16-bit, 24-bit, 32-bit float
-- **NFR-1.3.3**: No audible artifacts during normal speech
-- **NFR-1.3.4**: THD+N (Total Harmonic Distortion + Noise) < 0.1%
+### 2.1 Audio Processing Performance
 
-## 2. Scalability Requirements
+**NFR-001: Processing Latency**
+- **Requirement**: Total end-to-end latency SHALL NOT exceed 30ms
+- **Breakdown**:
+  - Audio acquisition: <5ms
+  - Noise processing: 10ms (RNNoise frame size)
+  - Virtual device routing: <15ms
+- **Measurement**: Loopback testing with timestamp comparison
+- **Priority**: Critical
 
-### 2.1 Concurrent Processing
-- **NFR-2.1.1**: Support single audio stream processing
-- **NFR-2.1.2**: Extensible architecture for future multi-stream support
-- **NFR-2.1.3**: Modular noise reduction algorithm for easy updates
+**NFR-002: Real-Time Processing**
+- **Requirement**: Audio processing SHALL maintain real-time performance without dropouts
+- **Target**: Zero audio dropouts during 24-hour continuous operation
+- **Buffer underruns**: <1 per hour under normal load
+- **Priority**: Critical
 
-### 2.2 Platform Scalability
-- **NFR-2.2.1**: Architecture supports future Linux port
-- **NFR-2.2.2**: Core audio processing platform-agnostic
-- **NFR-2.2.3**: UI layer separated from processing logic
+**NFR-003: CPU Usage**
+- **Requirement**: CPU usage SHALL NOT exceed 10% on modern systems
+- **Baseline System**: Intel i5 8th gen or Apple M1
+- **Measurement**: Average CPU usage during active processing
+- **Optimization**: SIMD instructions where applicable
+- **Priority**: High
 
-## 3. Availability Requirements
+**NFR-004: Memory Usage**
+- **Requirement**: RAM usage SHALL NOT exceed 150MB during operation
+- **Breakdown**:
+  - Base application: <50MB
+  - Audio buffers: <50MB
+  - RNNoise model: <10MB
+  - UI and visualization: <40MB
+- **No memory leaks**: Stable memory usage over 24 hours
+- **Priority**: High
 
-### 3.1 Uptime
-- **NFR-3.1.1**: Application stability > 99.9% during 8-hour sessions
-- **NFR-3.1.2**: Automatic recovery from audio device disconnection
-- **NFR-3.1.3**: Graceful handling of audio driver errors
-- **NFR-3.1.4**: No memory leaks over extended usage
+### 2.2 Startup Performance
 
-### 3.2 Startup/Shutdown
-- **NFR-3.2.1**: Application startup time < 3 seconds
-- **NFR-3.2.2**: Audio processing ready within 1 second of startup
-- **NFR-3.2.3**: Clean shutdown without audio glitches
-- **NFR-3.2.4**: Automatic startup option available
+**NFR-005: Application Launch Time**
+- **Requirement**: Application SHALL be ready for use within 3 seconds
+- **Cold start**: <3 seconds to main window
+- **Warm start**: <1 second from system tray
+- **Audio processing ready**: Within 500ms of window display
+- **Priority**: Medium
 
-## 4. Security Requirements
+**NFR-006: Device Enumeration Speed**
+- **Requirement**: Audio devices SHALL be enumerated within 1 second
+- **Initial scan**: Complete within application startup time
+- **Hot-plug detection**: <2 seconds to update device list
+- **Priority**: Medium
 
-### 4.1 Data Protection
-- **NFR-4.1.1**: No audio data stored to disk
-- **NFR-4.1.2**: All audio processing in-memory only
-- **NFR-4.1.3**: No network connectivity required
-- **NFR-4.1.4**: No telemetry or usage tracking
+## 3. Scalability Requirements
 
-### 4.2 Access Control
-- **NFR-4.2.1**: No elevated privileges required for normal operation
-- **NFR-4.2.2**: Virtual device installation requires one-time admin access
-- **NFR-4.2.3**: Configuration files use user-level permissions
-- **NFR-4.2.4**: No external API or service dependencies
+### 3.1 Audio Channel Support
 
-### 4.3 Privacy
-- **NFR-4.3.1**: No audio content analysis or storage
-- **NFR-4.3.2**: No user behavior tracking
-- **NFR-4.3.3**: Settings stored locally only
-- **NFR-4.3.4**: No cloud connectivity
+**NFR-007: Multi-Channel Processing**
+- **Requirement**: System SHALL support up to 32 audio channels
+- **Typical usage**: 1-2 channels (mono/stereo)
+- **Extended support**: Up to 32 channels for professional use
+- **Performance scaling**: Linear with channel count
+- **Priority**: Low
 
-## 5. Compliance Requirements
+### 3.2 Sample Rate Flexibility
 
-### 5.1 Audio Standards
-- **NFR-5.1.1**: Comply with ITU-T P.835 for speech quality
-- **NFR-5.1.2**: Follow AES guidelines for digital audio
-- **NFR-5.1.3**: Support standard audio formats (PCM, IEEE float)
+**NFR-008: Sample Rate Support**
+- **Requirement**: System SHALL support common audio sample rates
+- **Required rates**: 44.1kHz, 48kHz (RNNoise requirement)
+- **Optional rates**: 88.2kHz, 96kHz, 192kHz
+- **Automatic resampling**: For RNNoise compatibility (48kHz)
+- **Priority**: High
 
-### 5.2 Platform Guidelines
-- **NFR-5.2.1**: Follow Apple Human Interface Guidelines for macOS
-- **NFR-5.2.2**: Follow Windows Desktop App Guidelines
-- **NFR-5.2.3**: Code signing for both platforms
-- **NFR-5.2.4**: Notarization for macOS distribution
+## 4. Reliability Requirements
 
-## 6. Maintainability Requirements
+### 4.1 System Stability
 
-### 6.1 Code Quality
-- **NFR-6.1.1**: Modular architecture with clear separation of concerns
-- **NFR-6.1.2**: Comprehensive unit test coverage (>80%)
-- **NFR-6.1.3**: Integration tests for audio pipeline
-- **NFR-6.1.4**: Automated CI/CD pipeline
+**NFR-009: Uptime Requirements**
+- **Requirement**: Application SHALL maintain 99.9% uptime during operation
+- **MTBF**: >1000 hours
+- **Recovery time**: <5 seconds from recoverable errors
+- **Crash rate**: <0.1% of sessions
+- **Priority**: Critical
 
-### 6.2 Documentation
-- **NFR-6.2.1**: Inline code documentation
-- **NFR-6.2.2**: API documentation for all public interfaces
-- **NFR-6.2.3**: User manual and quick start guide
-- **NFR-6.2.4**: Developer setup and build instructions
+**NFR-010: Error Recovery**
+- **Requirement**: System SHALL recover gracefully from audio errors
+- **Device disconnection**: Automatic fallback within 2 seconds
+- **Driver errors**: Reinitialize audio system within 5 seconds
+- **Processing errors**: Fall back to passthrough mode
+- **Data integrity**: No corruption of audio stream
+- **Priority**: High
 
-### 6.3 Extensibility
-- **NFR-6.3.1**: Plugin architecture for future noise reduction algorithms
-- **NFR-6.3.2**: Configurable audio pipeline
-- **NFR-6.3.3**: Theme support for UI customization
-- **NFR-6.3.4**: Localization support structure
+### 4.2 Data Persistence
 
-## 7. Usability Requirements
+**NFR-011: Settings Reliability**
+- **Requirement**: User settings SHALL persist across all scenarios
+- **Crash recovery**: Settings preserved after unexpected shutdown
+- **Upgrade compatibility**: Settings migrate between versions
+- **Backup mechanism**: Automatic settings backup
+- **Priority**: Medium
 
-### 7.1 User Experience
-- **NFR-7.1.1**: Single-window interface with all controls visible
-- **NFR-7.1.2**: Maximum 2 clicks to any feature
-- **NFR-7.1.3**: Visual feedback for all user actions
-- **NFR-7.1.4**: Consistent UI across platforms
+## 5. Usability Requirements
 
-### 7.2 Accessibility
-- **NFR-7.2.1**: Keyboard navigation for all controls
-- **NFR-7.2.2**: Screen reader compatible
-- **NFR-7.2.3**: High contrast mode support
-- **NFR-7.2.4**: Configurable UI scaling
+### 5.1 User Interface Responsiveness
 
-### 7.3 Learning Curve
-- **NFR-7.3.1**: Intuitive controls requiring no manual
-- **NFR-7.3.2**: Tooltips for all UI elements
-- **NFR-7.3.3**: Default settings work for 90% of users
-- **NFR-7.3.4**: Advanced settings hidden by default
+**NFR-012: UI Response Time**
+- **Requirement**: UI controls SHALL respond within 100ms
+- **Button clicks**: <50ms visual feedback
+- **Dropdown menus**: <100ms to populate
+- **Slider adjustments**: Real-time with <16ms update
+- **Window operations**: Native OS performance
+- **Priority**: High
 
-## 8. Technical Constraints
+**NFR-013: Visual Feedback**
+- **Requirement**: Visualizations SHALL update at 30+ FPS
+- **Waveform display**: 30-60 FPS depending on CPU
+- **Spectrum analyzer**: Minimum 30 FPS
+- **Level meters**: 60 FPS for smooth animation
+- **No visual artifacts or tearing**
+- **Priority**: Medium
 
-### 8.1 Development Stack
-- **TC-1**: C++ for core audio processing (performance critical)
-- **TC-2**: JUCE framework for cross-platform audio and UI
-- **TC-3**: RNNoise or lightweight DNN for noise reduction
-- **TC-4**: CMake build system for cross-platform builds
+### 5.2 Accessibility
 
-### 8.2 Platform Requirements
-- **TC-5**: Windows 10/11 (64-bit)
-- **TC-6**: macOS 10.15+ (Intel and Apple Silicon)
-- **TC-7**: Minimum 4GB RAM
-- **TC-8**: Dual-core processor or better
+**NFR-014: Keyboard Navigation**
+- **Requirement**: All functions SHALL be accessible via keyboard
+- **Tab order**: Logical flow through controls
+- **Shortcuts**: Documented and discoverable
+- **Focus indicators**: Clearly visible
+- **Priority**: Medium
 
-### 8.3 Dependencies
-- **TC-9**: Minimal external dependencies
-- **TC-10**: All dependencies statically linked
-- **TC-11**: No runtime installers required
-- **TC-12**: Single executable distribution
+**NFR-015: Screen Reader Support**
+- **Requirement**: Application SHALL be compatible with screen readers
+- **Windows**: NVDA and JAWS compatibility
+- **macOS**: VoiceOver compatibility
+- **Alternative text**: For all visual elements
+- **Priority**: Low
 
-### 8.4 Distribution
-- **TC-13**: Installer size < 50MB
-- **TC-14**: Automatic update mechanism
-- **TC-15**: Delta updates for patches
-- **TC-16**: Offline installation support
+## 6. Security Requirements
+
+### 6.1 Privacy Protection
+
+**NFR-016: Local Processing**
+- **Requirement**: All audio processing SHALL occur locally
+- **No network transmission**: Audio never leaves device
+- **No cloud dependencies**: Full functionality offline
+- **No analytics**: No usage tracking without consent
+- **Priority**: Critical
+
+**NFR-017: Microphone Permissions**
+- **Requirement**: System SHALL respect OS privacy controls
+- **Permission requests**: Clear explanation of need
+- **Revocation handling**: Graceful degradation
+- **No circumvention**: Strict adherence to OS policies
+- **Priority**: Critical
+
+### 6.2 Software Security
+
+**NFR-018: Code Signing**
+- **Requirement**: Application SHALL be properly signed
+- **Windows**: EV code signing certificate
+- **macOS**: Notarized with Apple Developer ID
+- **Integrity verification**: Prevent tampering
+- **Priority**: High
+
+## 7. Compatibility Requirements
+
+### 7.1 Operating System Support
+
+**NFR-019: Windows Compatibility**
+- **Requirement**: Full support for Windows 10/11
+- **Minimum**: Windows 10 version 1903 (64-bit)
+- **Windows 11**: Native ARM64 support
+- **No admin required**: After initial driver setup
+- **Priority**: Critical
+
+**NFR-020: macOS Compatibility**
+- **Requirement**: Full support for modern macOS
+- **Minimum**: macOS 10.15 (Catalina)
+- **Apple Silicon**: Native M1/M2 support
+- **Universal binary**: Single app for Intel/ARM
+- **Priority**: Critical
+
+### 7.2 Hardware Compatibility
+
+**NFR-021: Audio Hardware Support**
+- **Requirement**: Compatible with 95% of audio devices
+- **USB audio**: Class-compliant devices
+- **Built-in audio**: All laptop/desktop mics
+- **Professional interfaces**: ASIO support (Windows)
+- **Bluetooth**: Basic support (higher latency accepted)
+- **Priority**: High
+
+### 7.3 Application Compatibility
+
+**NFR-022: Communication App Integration**
+- **Requirement**: Seamless integration with major platforms
+- **Verified apps**:
+  - Discord
+  - Zoom
+  - Microsoft Teams
+  - Google Meet
+  - Slack
+  - OBS Studio
+- **Testing**: Regular compatibility verification
+- **Priority**: Critical
+
+## 8. Maintainability Requirements
+
+### 8.1 Code Quality
+
+**NFR-023: Code Maintainability**
+- **Requirement**: Codebase SHALL follow best practices
+- **Code coverage**: >80% unit test coverage
+- **Documentation**: All public APIs documented
+- **Style guide**: Consistent code formatting
+- **Complexity**: Functions <50 lines, files <500 lines
+- **Priority**: High
+
+### 8.2 Logging and Diagnostics
+
+**NFR-024: Diagnostic Capabilities**
+- **Requirement**: Comprehensive logging system
+- **Log levels**: Error, Warning, Info, Debug
+- **Performance metrics**: CPU, memory, latency tracking
+- **Crash reports**: Automatic with user consent
+- **Log rotation**: Prevent disk space issues
+- **Priority**: Medium
+
+## 9. Portability Requirements
+
+### 9.1 Platform Independence
+
+**NFR-025: Cross-Platform Architecture**
+- **Requirement**: Core logic SHALL be platform-agnostic
+- **Architecture**: Clear separation of concerns
+- **Dependencies**: Minimal platform-specific code
+- **Build system**: Single CMake configuration
+- **Priority**: High
+
+## 10. Compliance Requirements
+
+### 10.1 Audio Standards
+
+**NFR-026: Audio Quality Standards**
+- **Requirement**: Output quality SHALL meet broadcast standards
+- **SNR**: >90dB
+- **THD+N**: <0.01%
+- **Frequency response**: 20Hz-20kHz ±0.5dB
+- **Phase coherence**: Maintained through processing
+- **Priority**: Medium
+
+### 10.2 Regulatory Compliance
+
+**NFR-027: Privacy Regulations**
+- **Requirement**: Comply with privacy laws
+- **GDPR**: No personal data collection
+- **CCPA**: California privacy compliance
+- **Microphone access**: Explicit user consent
+- **Priority**: High
+
+## 11. Quality Metrics
+
+### 11.1 Audio Quality Metrics
+
+**NFR-028: Noise Reduction Effectiveness**
+- **Requirement**: Measurable noise reduction
+- **Stationary noise**: >20dB reduction
+- **Non-stationary noise**: >15dB reduction
+- **Voice preservation**: PESQ score >3.0
+- **No artifacts**: Musical noise <5% of time
+- **Priority**: Critical
+
+### 11.2 User Experience Metrics
+
+**NFR-029: User Satisfaction**
+- **Requirement**: Positive user experience
+- **Setup time**: <5 minutes for first use
+- **Learning curve**: Basic use without manual
+- **Error rate**: <1% of operations fail
+- **Priority**: High
+
+## 12. Constraints
+
+### 12.1 Technical Constraints
+
+**CON-001: RNNoise Requirements**
+- Fixed 48kHz sample rate for processing
+- 10ms frame size (480 samples)
+- Mono processing only
+- Model size: ~85KB
+
+**CON-002: Virtual Audio Drivers**
+- Windows: Requires VB-Cable installation
+- macOS: Requires BlackHole installation
+- User must install separately
+- Cannot be bundled due to licensing
+
+### 12.2 Resource Constraints
+
+**CON-003: Development Resources**
+- Single platform builds initially
+- Limited to English UI
+- No custom virtual driver development
+- Rely on existing audio frameworks
+
+## 13. Performance Benchmarks
+
+### 13.1 Target Performance Metrics
+
+| Metric | Target | Minimum Acceptable |
+|--------|--------|-------------------|
+| Startup time | <2s | <3s |
+| Audio latency | <20ms | <30ms |
+| CPU usage | <5% | <10% |
+| Memory usage | <100MB | <150MB |
+| Frame rate | 60 FPS | 30 FPS |
+| Crash rate | <0.01% | <0.1% |
+| Device detection | <1s | <2s |
+
+### 13.2 Audio Quality Targets
+
+| Metric | Target | Minimum Acceptable |
+|--------|--------|-------------------|
+| Noise reduction | >25dB | >20dB |
+| Voice quality (PESQ) | >3.5 | >3.0 |
+| Latency | <20ms | <30ms |
+| CPU per channel | <2% | <5% |
+| Frequency range | 20-20kHz | 50-16kHz |
+
+## 14. Verification Methods
+
+### 14.1 Performance Testing
+- Automated latency measurement
+- CPU profiling under load
+- Memory leak detection
+- Long-duration stability tests
+
+### 14.2 Quality Testing
+- A/B testing with users
+- Objective audio quality metrics
+- Compatibility testing matrix
+- Stress testing with multiple devices
+
+## 15. Future Considerations
+
+### 15.1 Scalability Path
+- GPU acceleration for ML inference
+- Multiple algorithm support
+- Cloud model updates
+- Advanced audio routing
+
+### 15.2 Platform Expansion
+- Linux support
+- Mobile companion apps
+- Web-based version
+- Plugin formats (VST/AU)
