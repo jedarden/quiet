@@ -10,7 +10,7 @@
   },
   "runArgs": ["--privileged"],
   "remoteUser": "vscode",
-  "onCreateCommand": "npx create-sparc aigi init --force",
+  "onCreateCommand": "npx create-sparc aigi init --force &&  npm install -g @anthropic-ai/claude-code",
   "customizations": {
     "vscode": {
       "extensions": [
