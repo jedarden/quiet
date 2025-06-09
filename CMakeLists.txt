@@ -168,7 +168,17 @@ set(RNNOISE_INSTALL_DIR ${RNNOISE_PREFIX}/install)
 # Option to use system RNNoise if available
 option(USE_SYSTEM_RNNOISE "Use system-installed RNNoise instead of building from source" OFF)
 
-if(USE_SYSTEM_RNNOISE)
+# Check if RNNOISE_PATH is provided (for CI builds)
+if(DEFINED RNNOISE_PATH)
+    message(STATUS "Using RNNoise from: ${RNNOISE_PATH}")
+    target_include_directories(Quiet PRIVATE ${RNNOISE_PATH}/include)
+    
+    if(WIN32)
+        target_link_libraries(Quiet PRIVATE ${RNNOISE_PATH}/lib/rnnoise.lib)
+    else()
+        target_link_libraries(Quiet PRIVATE ${RNNOISE_PATH}/lib/librnnoise.a)
+    endif()
+elseif(USE_SYSTEM_RNNOISE)
     find_package(PkgConfig)
     if(PkgConfig_FOUND)
         pkg_check_modules(RNNOISE rnnoise)

@@ -1,0 +1,4 @@
+31abc3613b4100e8a69e378a4be761a2602eafe334b79f6589ff5cc6d85ea674  quiet-1.0.0-source.tar.gz
+1706a85235769e9d9909afceee666105f939f66a4313b221fa87178dfdcb0dbd  quiet-1.0.0-windows-installer-kit.tar.gz
+5a3c446c7050559bede11cfb618a5dd60702055f432ba17216294b717a1ec418  quiet-1.0.0-macos-installer-kit.tar.gz
+52e1bf1235bef9ecf57e7205b2f77424c45d1201d6ad9a6a5ec0c5b727e85470  quiet-1.0.0-docs.tar.gz
