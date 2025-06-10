@@ -101,7 +101,7 @@ jobs:
           Get-ChildItem -Path "build\Release" -Filter "*.dll" | Copy-Item -Destination "release\windows\"
           
           # Create README
-          @"
+          $readme = @"
 QUIET v1.0.0 - AI-Powered Noise Cancellation
 ===========================================
 
@@ -119,7 +119,8 @@ Requirements:
 Troubleshooting:
 - If the app doesn't start, install Visual C++ Redistributables
 - Run as Administrator if you encounter permission issues
-"@ | Out-File -FilePath "release\windows\README.txt" -Encoding UTF8
+"@
+          $readme | Out-File -FilePath "release\windows\README.txt" -Encoding UTF8
           
           # Create installer script
           Copy-Item "installer\windows\quiet_installer.nsi" "release\windows\" -ErrorAction SilentlyContinue
