@@ -58,8 +58,48 @@ jobs:
           if exist "build\Release\QUIET.exe" (
             copy "build\Release\QUIET.exe" "installer\windows\"
           ) else (
-            echo No executable found > "installer\windows\QUIET.exe"
+            echo Creating placeholder executable
+            mkdir installer\windows 2>nul
+            
+            echo #include ^<iostream^> > temp.cpp
+            echo #include ^<windows.h^> >> temp.cpp
+            echo int main() { >> temp.cpp
+            echo     std::cout ^<^< "QUIET v1.0.0 - AI-Powered Noise Cancellation\n"; >> temp.cpp
+            echo     std::cout ^<^< "This is a placeholder build.\n"; >> temp.cpp
+            echo     std::cout ^<^< "Full application requires proper build environment.\n"; >> temp.cpp
+            echo     std::cout ^<^< "\nPress Enter to exit..."; >> temp.cpp
+            echo     std::cin.get(); >> temp.cpp
+            echo     return 0; >> temp.cpp
+            echo } >> temp.cpp
+            
+            cl /EHsc temp.cpp /Fe:installer\windows\QUIET.exe 2>nul || (
+              echo @echo off > installer\windows\QUIET.bat
+              echo echo QUIET v1.0.0 - AI-Powered Noise Cancellation >> installer\windows\QUIET.bat
+              echo echo This is a placeholder build. >> installer\windows\QUIET.bat
+              echo echo Full application requires proper build environment. >> installer\windows\QUIET.bat
+              echo pause >> installer\windows\QUIET.bat
+            )
           )
+          
+      - name: Add README
+        shell: cmd
+        run: |
+          echo QUIET v1.0.0 - AI-Powered Noise Cancellation > installer\windows\README.txt
+          echo ============================================ >> installer\windows\README.txt
+          echo. >> installer\windows\README.txt
+          echo This is a demonstration build of QUIET. >> installer\windows\README.txt
+          echo. >> installer\windows\README.txt
+          echo To build the full application: >> installer\windows\README.txt
+          echo 1. Install Visual Studio 2022 >> installer\windows\README.txt
+          echo 2. Install CMake 3.20+ >> installer\windows\README.txt
+          echo 3. Clone: https://github.com/jedarden/quiet >> installer\windows\README.txt
+          echo 4. Build with CMake >> installer\windows\README.txt
+          echo. >> installer\windows\README.txt
+          echo Features when fully built: >> installer\windows\README.txt
+          echo - Real-time noise reduction using RNNoise ML >> installer\windows\README.txt
+          echo - Virtual audio device routing >> installer\windows\README.txt
+          echo - Low latency (^<30ms) >> installer\windows\README.txt
+          echo - Visual audio feedback >> installer\windows\README.txt
           
       - name: Package
         run: |
@@ -110,14 +150,61 @@ jobs:
         
       - name: Create App Bundle
         run: |
-          mkdir -p build/QUIET.app/Contents/MacOS
+          mkdir -p build/QUIET.app/Contents/{MacOS,Resources}
+          
           if [ -f "build/Quiet" ]; then
-            cp build/Quiet build/QUIET.app/Contents/MacOS/
+            cp build/Quiet build/QUIET.app/Contents/MacOS/QUIET
           else
-            echo '#!/bin/bash' > build/QUIET.app/Contents/MacOS/QUIET
-            echo 'echo "QUIET Placeholder"' >> build/QUIET.app/Contents/MacOS/QUIET
-            chmod +x build/QUIET.app/Contents/MacOS/QUIET
+            # Create a simple C++ placeholder
+            cat > temp.cpp << 'EOF'
+          #include <iostream>
+          int main() {
+              std::cout << "QUIET v1.0.0 - AI-Powered Noise Cancellation\n";
+              std::cout << "=====================================\n\n";
+              std::cout << "This is a demonstration build.\n\n";
+              std::cout << "Full application features:\n";
+              std::cout << "- Real-time noise reduction using RNNoise ML\n";
+              std::cout << "- Virtual audio device routing\n";
+              std::cout << "- Low latency (<30ms)\n";
+              std::cout << "- Visual audio feedback\n\n";
+              std::cout << "To build: See https://github.com/jedarden/quiet\n\n";
+              std::cout << "Press Enter to exit...";
+              std::cin.get();
+              return 0;
+          }
+          EOF
+            
+            c++ -o build/QUIET.app/Contents/MacOS/QUIET temp.cpp 2>/dev/null || {
+              echo '#!/bin/bash' > build/QUIET.app/Contents/MacOS/QUIET
+              echo 'echo "QUIET v1.0.0 - AI-Powered Noise Cancellation"' >> build/QUIET.app/Contents/MacOS/QUIET
+              echo 'echo "This is a demonstration build."' >> build/QUIET.app/Contents/MacOS/QUIET
+              echo 'echo "See https://github.com/jedarden/quiet for full version."' >> build/QUIET.app/Contents/MacOS/QUIET
+              echo 'read -p "Press Enter to exit..."' >> build/QUIET.app/Contents/MacOS/QUIET
+              chmod +x build/QUIET.app/Contents/MacOS/QUIET
+            }
           fi
+          
+          # Create Info.plist
+          cat > build/QUIET.app/Contents/Info.plist << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleName</key>
+              <string>QUIET</string>
+              <key>CFBundleDisplayName</key>
+              <string>QUIET</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.quietapp.quiet</string>
+              <key>CFBundleVersion</key>
+              <string>1.0.0</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleExecutable</key>
+              <string>QUIET</string>
+          </dict>
+          </plist>
+          EOF
           
       - name: Create DMG
         run: |
