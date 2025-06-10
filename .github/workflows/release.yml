@@ -16,9 +16,20 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         
       - name: Install CMake
+        shell: pwsh
         run: |
-          choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System'
-          refreshenv
+          choco install cmake.install --installargs 'ADD_CMAKE_TO_PATH=System' -y
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+          
+          # Add CMake to PATH for this session
+          $cmakePath = "C:\Program Files\CMake\bin"
+          if (Test-Path $cmakePath) {
+            $env:Path = "$cmakePath;$env:Path"
+            Write-Host "Added CMake to PATH: $cmakePath"
+          }
+          
+          # Verify CMake is available
+          cmake --version
           
       - name: Create placeholder icon if missing
         shell: pwsh
@@ -81,13 +92,22 @@ jobs:
           }
           
       - name: Configure CMake
+        shell: pwsh
         run: |
-          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DRNNOISE_PATH="$PWD/build/rnnoise"
+          # Ensure CMake is in PATH
+          $env:Path = "C:\Program Files\CMake\bin;$env:Path"
+          
+          # Configure
+          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DRNNOISE_PATH="$((Get-Location).Path)/build/rnnoise"
           
       - name: Build
-        run: cmake --build build --config Release
+        shell: pwsh
+        run: |
+          $env:Path = "C:\Program Files\CMake\bin;$env:Path"
+          cmake --build build --config Release
         
       - name: Create Installer
+        shell: pwsh
         run: |
           # Check if executable exists
           if (Test-Path "build/Release/QUIET.exe") {
