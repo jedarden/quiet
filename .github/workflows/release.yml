@@ -12,105 +12,126 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Setup Build Environment
+      - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
         
-      - name: Install CMake
-        shell: cmd
+      - name: Install Dependencies
         run: |
           choco install cmake --installargs 'ADD_CMAKE_TO_PATH=System' -y
+          choco install git -y
           
-      - name: Create placeholder files
-        shell: cmd
+      - name: Cache Dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            build/_deps
+            build/rnnoise
+          key: ${{ runner.os }}-deps-${{ hashFiles('CMakeLists.txt') }}
+          
+      - name: Build RNNoise
+        shell: powershell
         run: |
-          if not exist "resources\icons" mkdir "resources\icons"
-          if not exist "resources\icons\icon_512.png" echo. > "resources\icons\icon_512.png"
-          if not exist "resources\icons\icon_128.png" echo. > "resources\icons\icon_128.png"
+          if (-not (Test-Path "build\rnnoise\lib\rnnoise.lib")) {
+            # Download pre-built RNNoise or build from source
+            git clone https://github.com/xiph/rnnoise.git build\rnnoise-src
+            cd build\rnnoise-src
+            
+            # RNNoise uses autotools, so we'll compile it directly
+            $sourceFiles = @(
+              "src\denoise.c",
+              "src\rnn.c",
+              "src\rnn_data.c",
+              "src\rnn_reader.c",
+              "src\pitch.c",
+              "src\kiss_fft.c",
+              "src\celt_lpc.c"
+            )
+            
+            # Create directories
+            New-Item -ItemType Directory -Force -Path "..\..\rnnoise\include"
+            New-Item -ItemType Directory -Force -Path "..\..\rnnoise\lib"
+            
+            # Copy header
+            Copy-Item "include\rnnoise.h" "..\..\rnnoise\include\"
+            
+            # Compile to static library
+            $objFiles = @()
+            foreach ($src in $sourceFiles) {
+              $obj = $src -replace "\.c$", ".obj"
+              cl /c /O2 /MT /I"include" $src /Fo:$obj
+              $objFiles += $obj
+            }
+            
+            # Create static library
+            lib /OUT:"..\..\rnnoise\lib\rnnoise.lib" $objFiles
+            
+            cd ..\..
+          }
           
-          if not exist "src\platform\windows" mkdir "src\platform\windows"
-          if not exist "src\platform\macos" mkdir "src\platform\macos"
-          
-          echo // Placeholder > "src\platform\windows\WASAPIDevice.cpp"
-          echo // Placeholder > "src\platform\windows\VBCableIntegration.cpp"
-          
-      - name: Setup RNNoise
-        shell: cmd
-        run: |
-          mkdir build\rnnoise\include
-          mkdir build\rnnoise\lib
-          echo #ifndef RNNOISE_H > build\rnnoise\include\rnnoise.h
-          echo #define RNNOISE_H >> build\rnnoise\include\rnnoise.h
-          echo typedef struct DenoiseState DenoiseState; >> build\rnnoise\include\rnnoise.h
-          echo #endif >> build\rnnoise\include\rnnoise.h
-          echo. > build\rnnoise\lib\rnnoise.lib
-          
-      - name: Configure and Build
+      - name: Configure CMake
         shell: cmd
         run: |
           set PATH=C:\Program Files\CMake\bin;%PATH%
-          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DRNNOISE_PATH=%CD%\build\rnnoise
-          cmake --build build --config Release
-        continue-on-error: true
-        
-      - name: Create Installer
-        shell: cmd
-        run: |
-          if exist "build\Release\QUIET.exe" (
-            copy "build\Release\QUIET.exe" "installer\windows\"
-          ) else (
-            echo Creating placeholder executable
-            mkdir installer\windows 2>nul
-            
-            echo #include ^<iostream^> > temp.cpp
-            echo #include ^<windows.h^> >> temp.cpp
-            echo int main() { >> temp.cpp
-            echo     std::cout ^<^< "QUIET v1.0.0 - AI-Powered Noise Cancellation\n"; >> temp.cpp
-            echo     std::cout ^<^< "This is a placeholder build.\n"; >> temp.cpp
-            echo     std::cout ^<^< "Full application requires proper build environment.\n"; >> temp.cpp
-            echo     std::cout ^<^< "\nPress Enter to exit..."; >> temp.cpp
-            echo     std::cin.get(); >> temp.cpp
-            echo     return 0; >> temp.cpp
-            echo } >> temp.cpp
-            
-            cl /EHsc temp.cpp /Fe:installer\windows\QUIET.exe 2>nul || (
-              echo @echo off > installer\windows\QUIET.bat
-              echo echo QUIET v1.0.0 - AI-Powered Noise Cancellation >> installer\windows\QUIET.bat
-              echo echo This is a placeholder build. >> installer\windows\QUIET.bat
-              echo echo Full application requires proper build environment. >> installer\windows\QUIET.bat
-              echo pause >> installer\windows\QUIET.bat
-            )
-          )
+          cmake -B build -S . ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DUSE_SYSTEM_RNNOISE=ON ^
+            -DRNNOISE_PATH=%CD%\build\rnnoise ^
+            -DBUILD_TESTS=OFF
           
-      - name: Add README
+      - name: Build
         shell: cmd
         run: |
-          echo QUIET v1.0.0 - AI-Powered Noise Cancellation > installer\windows\README.txt
-          echo ============================================ >> installer\windows\README.txt
-          echo. >> installer\windows\README.txt
-          echo This is a demonstration build of QUIET. >> installer\windows\README.txt
-          echo. >> installer\windows\README.txt
-          echo To build the full application: >> installer\windows\README.txt
-          echo 1. Install Visual Studio 2022 >> installer\windows\README.txt
-          echo 2. Install CMake 3.20+ >> installer\windows\README.txt
-          echo 3. Clone: https://github.com/jedarden/quiet >> installer\windows\README.txt
-          echo 4. Build with CMake >> installer\windows\README.txt
-          echo. >> installer\windows\README.txt
-          echo Features when fully built: >> installer\windows\README.txt
-          echo - Real-time noise reduction using RNNoise ML >> installer\windows\README.txt
-          echo - Virtual audio device routing >> installer\windows\README.txt
-          echo - Low latency (^<30ms) >> installer\windows\README.txt
-          echo - Visual audio feedback >> installer\windows\README.txt
+          set PATH=C:\Program Files\CMake\bin;%PATH%
+          cmake --build build --config Release --parallel 4
           
       - name: Package
+        shell: powershell
         run: |
-          Compress-Archive -Path installer\windows\* -DestinationPath QUIET-windows.zip
+          # Create output directory
+          New-Item -ItemType Directory -Force -Path "release\windows"
+          
+          # Copy executable
+          if (Test-Path "build\Release\Quiet.exe") {
+            Copy-Item "build\Release\Quiet.exe" "release\windows\"
+          } elseif (Test-Path "build\Quiet_artefacts\Release\Quiet.exe") {
+            Copy-Item "build\Quiet_artefacts\Release\Quiet.exe" "release\windows\"
+          }
+          
+          # Copy required DLLs (if any)
+          Get-ChildItem -Path "build\Release" -Filter "*.dll" | Copy-Item -Destination "release\windows\"
+          
+          # Create README
+          @"
+QUIET v1.0.0 - AI-Powered Noise Cancellation
+===========================================
+
+Installation:
+1. Install VB-Cable from https://vb-audio.com/Cable/
+2. Run QUIET.exe
+3. Select VB-Cable as your input/output device
+4. Enable noise cancellation
+
+Requirements:
+- Windows 10 version 1903 or later
+- VB-Cable virtual audio driver
+- 4GB RAM minimum
+
+Troubleshooting:
+- If the app doesn't start, install Visual C++ Redistributables
+- Run as Administrator if you encounter permission issues
+"@ | Out-File -FilePath "release\windows\README.txt" -Encoding UTF8
+          
+          # Create installer script
+          Copy-Item "installer\windows\quiet_installer.nsi" "release\windows\" -ErrorAction SilentlyContinue
+          
+          # Create archive
+          Compress-Archive -Path "release\windows\*" -DestinationPath "QUIET-windows-x64.zip"
           
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: windows-installer
-          path: QUIET-windows.zip
-          if-no-files-found: warn
+          name: windows-release
+          path: QUIET-windows-x64.zip
 
   build-macos:
     runs-on: macos-latest
@@ -119,103 +140,132 @@ jobs:
       
       - name: Install Dependencies
         run: |
-          brew install cmake || true
+          brew install cmake
+          brew install autoconf automake libtool
           
-      - name: Create placeholder files
+      - name: Cache Dependencies
+        uses: actions/cache@v3
+        with:
+          path: |
+            build/_deps
+            build/rnnoise
+          key: ${{ runner.os }}-deps-${{ hashFiles('CMakeLists.txt') }}
+          
+      - name: Build RNNoise
         run: |
-          mkdir -p resources/icons
-          touch resources/icons/icon_512.png
-          touch resources/icons/icon_128.png
-          
-          mkdir -p src/platform/macos src/platform/windows
-          echo "// Placeholder" > src/platform/macos/CoreAudioDevice.cpp
-          echo "// Placeholder" > src/platform/macos/BlackHoleIntegration.cpp
-          
-      - name: Setup RNNoise
-        run: |
-          mkdir -p build/rnnoise/{include,lib}
-          cat > build/rnnoise/include/rnnoise.h << 'EOF'
-          #ifndef RNNOISE_H
-          #define RNNOISE_H
-          typedef struct DenoiseState DenoiseState;
-          #endif
-          EOF
-          touch build/rnnoise/lib/librnnoise.a
-          
-      - name: Configure and Build
-        run: |
-          cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DRNNOISE_PATH=$PWD/build/rnnoise
-          cmake --build build --config Release
-        continue-on-error: true
-        
-      - name: Create App Bundle
-        run: |
-          mkdir -p build/QUIET.app/Contents/{MacOS,Resources}
-          
-          if [ -f "build/Quiet" ]; then
-            cp build/Quiet build/QUIET.app/Contents/MacOS/QUIET
-          else
-            # Create a simple C++ placeholder
-            cat > temp.cpp << 'EOF'
-          #include <iostream>
-          int main() {
-              std::cout << "QUIET v1.0.0 - AI-Powered Noise Cancellation\n";
-              std::cout << "=====================================\n\n";
-              std::cout << "This is a demonstration build.\n\n";
-              std::cout << "Full application features:\n";
-              std::cout << "- Real-time noise reduction using RNNoise ML\n";
-              std::cout << "- Virtual audio device routing\n";
-              std::cout << "- Low latency (<30ms)\n";
-              std::cout << "- Visual audio feedback\n\n";
-              std::cout << "To build: See https://github.com/jedarden/quiet\n\n";
-              std::cout << "Press Enter to exit...";
-              std::cin.get();
-              return 0;
-          }
-          EOF
+          if [ ! -f "build/rnnoise/lib/librnnoise.a" ]; then
+            git clone https://github.com/xiph/rnnoise.git build/rnnoise-src
+            cd build/rnnoise-src
             
-            c++ -o build/QUIET.app/Contents/MacOS/QUIET temp.cpp 2>/dev/null || {
-              echo '#!/bin/bash' > build/QUIET.app/Contents/MacOS/QUIET
-              echo 'echo "QUIET v1.0.0 - AI-Powered Noise Cancellation"' >> build/QUIET.app/Contents/MacOS/QUIET
-              echo 'echo "This is a demonstration build."' >> build/QUIET.app/Contents/MacOS/QUIET
-              echo 'echo "See https://github.com/jedarden/quiet for full version."' >> build/QUIET.app/Contents/MacOS/QUIET
-              echo 'read -p "Press Enter to exit..."' >> build/QUIET.app/Contents/MacOS/QUIET
-              chmod +x build/QUIET.app/Contents/MacOS/QUIET
-            }
+            ./autogen.sh
+            ./configure --prefix=$PWD/../rnnoise
+            make -j$(sysctl -n hw.ncpu)
+            make install
+            cd ../..
           fi
           
-          # Create Info.plist
-          cat > build/QUIET.app/Contents/Info.plist << 'EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>CFBundleName</key>
-              <string>QUIET</string>
-              <key>CFBundleDisplayName</key>
-              <string>QUIET</string>
-              <key>CFBundleIdentifier</key>
-              <string>com.quietapp.quiet</string>
-              <key>CFBundleVersion</key>
-              <string>1.0.0</string>
-              <key>CFBundlePackageType</key>
-              <string>APPL</string>
-              <key>CFBundleExecutable</key>
-              <string>QUIET</string>
-          </dict>
-          </plist>
-          EOF
-          
-      - name: Create DMG
+      - name: Configure CMake
         run: |
-          hdiutil create -volname "QUIET" -srcfolder build -ov -format UDZO QUIET.dmg
+          cmake -B build -S . \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" \
+            -DUSE_SYSTEM_RNNOISE=ON \
+            -DRNNOISE_PATH=$PWD/build/rnnoise \
+            -DBUILD_TESTS=OFF
+          
+      - name: Build
+        run: |
+          cmake --build build --config Release --parallel $(sysctl -n hw.ncpu)
+          
+      - name: Create App Bundle
+        run: |
+          # Find the built executable
+          EXEC_PATH=$(find build -name "Quiet" -type f -perm +111 | head -1)
+          
+          if [ -n "$EXEC_PATH" ]; then
+            # Create proper app bundle
+            mkdir -p "QUIET.app/Contents/MacOS"
+            mkdir -p "QUIET.app/Contents/Resources"
+            
+            # Copy executable
+            cp "$EXEC_PATH" "QUIET.app/Contents/MacOS/QUIET"
+            
+            # Create Info.plist
+            cat > "QUIET.app/Contents/Info.plist" << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>QUIET</string>
+    <key>CFBundleDisplayName</key>
+    <string>QUIET - AI Noise Cancellation</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.quietapp.quiet</string>
+    <key>CFBundleVersion</key>
+    <string>1.0.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0.0</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleExecutable</key>
+    <string>QUIET</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>10.15</string>
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>QUIET needs access to your microphone for noise cancellation.</string>
+</dict>
+</plist>
+EOF
+            
+            # Sign the app (if certificates are available)
+            codesign --force --deep --sign - "QUIET.app" || true
+            
+            # Create DMG
+            mkdir dmg-content
+            cp -R QUIET.app dmg-content/
+            
+            # Create README
+            cat > "dmg-content/README.txt" << 'EOF'
+QUIET v1.0.0 - AI-Powered Noise Cancellation
+===========================================
+
+Installation:
+1. Install BlackHole from https://github.com/ExistentialAudio/BlackHole
+   brew install blackhole-2ch
+2. Drag QUIET.app to your Applications folder
+3. Run QUIET from Applications
+4. Grant microphone permissions when prompted
+5. Select BlackHole as your audio device
+
+Requirements:
+- macOS 10.15 Catalina or later
+- BlackHole virtual audio driver
+- 4GB RAM minimum
+
+First Run:
+- You may need to right-click and select "Open" due to Gatekeeper
+- Grant microphone permissions in System Preferences > Security & Privacy
+EOF
+            
+            # Create DMG
+            hdiutil create -volname "QUIET" -srcfolder dmg-content -ov -format UDZO "QUIET-macOS.dmg"
+          else
+            echo "Build failed - creating placeholder"
+            mkdir -p dmg-content
+            echo "Build failed. Please build from source." > dmg-content/BUILD_FAILED.txt
+            hdiutil create -volname "QUIET" -srcfolder dmg-content -ov -format UDZO "QUIET-macOS.dmg"
+          fi
           
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: macos-installer
-          path: QUIET.dmg
-          if-no-files-found: warn
+          name: macos-release
+          path: QUIET-macOS.dmg
 
   create-release:
     needs: [build-windows, build-macos]
@@ -230,31 +280,66 @@ jobs:
         with:
           path: release-artifacts
           
+      - name: Create Release Notes
+        run: |
+          cat > release-notes.md << 'EOF'
+# QUIET v1.0.0 - AI-Powered Noise Cancellation
+
+## Overview
+QUIET is a desktop application that provides real-time AI-powered background noise removal for live audio streams using the RNNoise machine learning algorithm.
+
+## Downloads
+- **Windows**: `QUIET-windows-x64.zip` - For Windows 10/11 (64-bit)
+- **macOS**: `QUIET-macOS.dmg` - For macOS 10.15+ (Intel & Apple Silicon)
+
+## Installation
+
+### Windows
+1. Download and extract `QUIET-windows-x64.zip`
+2. Install [VB-Cable](https://vb-audio.com/Cable/) virtual audio driver
+3. Run `QUIET.exe`
+4. Select VB-Cable as your audio device
+
+### macOS
+1. Download `QUIET-macOS.dmg`
+2. Install [BlackHole](https://github.com/ExistentialAudio/BlackHole) audio driver
+3. Drag QUIET to Applications
+4. Grant microphone permissions when prompted
+
+## Features
+- ✅ Real-time noise reduction using RNNoise ML algorithm
+- ✅ Cross-platform support (Windows & macOS)
+- ✅ Ultra-low latency (<30ms)
+- ✅ Virtual audio device routing
+- ✅ Visual audio feedback (waveform & spectrum analyzer)
+- ✅ Hot-plug audio device detection
+- ✅ Configurable noise reduction levels
+
+## System Requirements
+- **Windows**: Windows 10 version 1903 or later, 4GB RAM
+- **macOS**: macOS 10.15 Catalina or later, 4GB RAM
+- Virtual audio driver (VB-Cable for Windows, BlackHole for macOS)
+
+## Known Issues
+- First launch may require approval in system security settings
+- Virtual audio driver must be installed separately
+
+## Source Code
+Full source code available at: https://github.com/jedarden/quiet
+
+## License
+MIT License - See LICENSE file for details
+EOF
+          
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             release-artifacts/**/*.zip
             release-artifacts/**/*.dmg
-            README.md
             LICENSE
-          body: |
-            # QUIET v1.0.0 Release
-            
-            AI-powered background noise removal for desktop platforms.
-            
-            ## Downloads
-            - **Windows**: QUIET-windows.zip
-            - **macOS**: QUIET.dmg
-            
-            ## Features
-            - Real-time noise reduction using RNNoise
-            - Cross-platform support (Windows/macOS)
-            - Low latency (<30ms)
-            - Virtual audio device routing
-            
+          body_path: release-notes.md
           draft: false
           prerelease: false
-          fail_on_unmatched_files: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
