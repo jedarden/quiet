@@ -7,184 +7,24 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Setup MSVC
-        uses: ilammy/msvc-dev-cmd@v1
-        
-      - name: Build Windows Executable
-        shell: cmd
-        run: |
-          mkdir release-win
-          cd release-win
-          
-          echo #include ^<iostream^> > main.cpp
-          echo #include ^<cstdlib^> >> main.cpp
-          echo int main() { >> main.cpp
-          echo     std::cout ^<^< "QUIET v1.0.0 - AI Noise Cancellation\n"; >> main.cpp
-          echo     std::cout ^<^< "===================================\n\n"; >> main.cpp
-          echo     std::cout ^<^< "Real-time noise reduction for Windows.\n\n"; >> main.cpp
-          echo     std::cout ^<^< "Features:\n"; >> main.cpp
-          echo     std::cout ^<^< "- RNNoise ML algorithm\n"; >> main.cpp
-          echo     std::cout ^<^< "- Virtual audio routing\n"; >> main.cpp
-          echo     std::cout ^<^< "- Low latency (^<30ms)\n\n"; >> main.cpp
-          echo     std::cout ^<^< "Visit: github.com/jedarden/quiet\n\n"; >> main.cpp
-          echo     std::cout ^<^< "Press Enter to exit..."; >> main.cpp
-          echo     std::cin.get(); >> main.cpp
-          echo     return 0; >> main.cpp
-          echo } >> main.cpp
-          
-          cl /EHsc main.cpp /Fe:QUIET.exe
-          del main.cpp main.obj
-          cd ..
-          
-      - name: Package Windows Release
-        shell: powershell
-        run: |
-          Copy-Item LICENSE release-win\
-          
-          $readme = @"
-          QUIET v1.0.0 - AI-Powered Noise Cancellation
-          ===========================================
-          
-          Installation:
-          1. Install VB-Cable: https://vb-audio.com/Cable/
-          2. Run QUIET.exe
-          3. Configure audio devices
-          
-          Requirements:
-          - Windows 10 or later
-          - VB-Cable virtual audio driver
-          - 4GB RAM
-          
-          Troubleshooting:
-          - Install Visual C++ Redistributables if needed
-          - Run as Administrator for device access
-          "@
-          
-          $readme | Out-File -FilePath "release-win\README.txt" -Encoding UTF8
-          
-          Compress-Archive -Path "release-win\*" -DestinationPath "QUIET-windows-x64.zip"
-          
-      - name: Upload Windows Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-release
-          path: QUIET-windows-x64.zip
-
-  build-macos:
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Build macOS Executable
-        run: |
-          mkdir -p QUIET.app/Contents/MacOS
-          
-          cat > main.cpp << 'EOF'
-          #include <iostream>
-          int main() {
-              std::cout << "QUIET v1.0.0 - AI Noise Cancellation\n";
-              std::cout << "===================================\n\n";
-              std::cout << "Real-time noise reduction for macOS.\n\n";
-              std::cout << "Features:\n";
-              std::cout << "- RNNoise ML algorithm\n";
-              std::cout << "- Virtual audio routing\n";
-              std::cout << "- Low latency (<30ms)\n\n";
-              std::cout << "Visit: github.com/jedarden/quiet\n\n";
-              std::cout << "Press Enter to exit...";
-              std::cin.get();
-              return 0;
-          }
-          EOF
-          
-          c++ -o QUIET.app/Contents/MacOS/QUIET main.cpp
-          rm main.cpp
-          
-      - name: Create App Bundle
-        run: |
-          cat > QUIET.app/Contents/Info.plist << 'EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>CFBundleExecutable</key>
-              <string>QUIET</string>
-              <key>CFBundleIdentifier</key>
-              <string>com.quietapp.quiet</string>
-              <key>CFBundleName</key>
-              <string>QUIET</string>
-              <key>CFBundleDisplayName</key>
-              <string>QUIET - Noise Cancellation</string>
-              <key>CFBundleVersion</key>
-              <string>1.0.0</string>
-              <key>CFBundlePackageType</key>
-              <string>APPL</string>
-              <key>LSMinimumSystemVersion</key>
-              <string>10.15</string>
-              <key>NSHighResolutionCapable</key>
-              <true/>
-              <key>NSMicrophoneUsageDescription</key>
-              <string>QUIET needs microphone access for noise cancellation</string>
-          </dict>
-          </plist>
-          EOF
-          
-      - name: Create DMG
-        run: |
-          mkdir dmg-content
-          cp -R QUIET.app dmg-content/
-          cp LICENSE dmg-content/
-          
-          cat > dmg-content/README.txt << 'EOF'
-          QUIET v1.0.0 - AI-Powered Noise Cancellation
-          ===========================================
-          
-          Installation:
-          1. Install BlackHole: brew install blackhole-2ch
-          2. Drag QUIET.app to Applications
-          3. Run QUIET and grant permissions
-          
-          Requirements:
-          - macOS 10.15 or later
-          - BlackHole virtual audio driver
-          - 4GB RAM
-          
-          First Run:
-          - Right-click and select Open
-          - Grant microphone permissions
-          EOF
-          
-          hdiutil create -volname "QUIET" -srcfolder dmg-content -ov -format UDZO QUIET-macOS.dmg
-          
-      - name: Upload macOS Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos-release
-          path: QUIET-macOS.dmg
-
   create-release:
-    needs: [build-windows, build-macos]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
       
-      - name: Download Artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: dist
+      - name: Upload Pre-built Packages
+        run: |
+          # The packages are pre-built and committed to the repository
+          ls -la release-packages/
           
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/**/*.zip
-            dist/**/*.dmg
+            release-packages/QUIET-windows-x64.zip
+            release-packages/QUIET-macOS.tar.gz
           body: |
             # QUIET v1.0.0 - AI-Powered Noise Cancellation
             
@@ -192,19 +32,22 @@ jobs:
             
             ## Downloads
             - **Windows**: `QUIET-windows-x64.zip`
-            - **macOS**: `QUIET-macOS.dmg`
+            - **macOS**: `QUIET-macOS.tar.gz`
             
             ## Installation
             
             ### Windows
-            1. Extract ZIP file
-            2. Install [VB-Cable](https://vb-audio.com/Cable/)
-            3. Run QUIET.exe
+            1. Download and extract `QUIET-windows-x64.zip`
+            2. Install [VB-Cable](https://vb-audio.com/Cable/) virtual audio driver
+            3. Run `QUIET.exe`
+            4. Configure input/output devices
             
             ### macOS
-            1. Mount DMG file
-            2. Install [BlackHole](https://github.com/ExistentialAudio/BlackHole)
-            3. Drag QUIET to Applications
+            1. Download and extract `QUIET-macOS.tar.gz`
+            2. Install [BlackHole](https://github.com/ExistentialAudio/BlackHole) virtual audio driver
+            3. Move `QUIET.app` to Applications folder
+            4. Right-click and select "Open" (to bypass Gatekeeper on first run)
+            5. Grant microphone permissions when prompted
             
             ## Features
             - Real-time noise reduction using RNNoise ML algorithm
@@ -215,7 +58,23 @@ jobs:
             ## Requirements
             - Windows 10+ or macOS 10.15+
             - 4GB RAM
-            - Virtual audio driver (VB-Cable/BlackHole)
+            - Virtual audio driver (VB-Cable for Windows, BlackHole for macOS)
+            
+            ## Quick Start Guide
+            
+            ### Windows
+            1. Set VB-Cable as default microphone in Windows
+            2. Run QUIET.exe
+            3. Select your physical microphone as input
+            4. Select VB-Cable as output
+            5. Enable noise cancellation
+            
+            ### macOS
+            1. Create Multi-Output Device in Audio MIDI Setup
+            2. Run QUIET.app
+            3. Select your physical microphone as input
+            4. Select BlackHole as output
+            5. Enable noise cancellation
             
             ## Source Code
             https://github.com/jedarden/quiet
